@@ -1,8 +1,13 @@
 import argparse
 import numpy as np
 import cv2
+import os
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from collections import deque
+
+rstp: str = ""
+load_dotenv()  # .env has the rstp url of the camera, including rstp://username:password@ip...
 
 MOTIONS_DETECTED = 3  # require n number of captures to consider it an Alert
 SECS_LAST_MOVEMENT = 2  # seconds since the first capture considered an Alert
@@ -128,7 +133,7 @@ def main():
         "-u",
         "--url",
         type=str,
-        default="rtsp://admin:Ip1921681108@192.168.10.38:554/cam/realmonitor?channel=1&subtype=1",
+        default=os.getenv("rstp"),
         help="RTSP URL of the camera including user:password if required",
     )
     parser.add_argument(
