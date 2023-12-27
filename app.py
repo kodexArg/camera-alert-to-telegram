@@ -1,40 +1,48 @@
+#!.venv/bin/python
 import argparse
 import numpy as np
 import cv2
 import os
+import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from collections import deque
+from telegram import ForceReply, Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-rstp: str = ""
-load_dotenv()  # .env has the rstp url of the camera, including rstp://username:password@ip...
+rstp: str = ""  # rtsp url in .env
+load_dotenv()
 
 MOTIONS_DETECTED = 3  # require n number of captures to consider it an Alert
 SECS_LAST_MOVEMENT = 2  # seconds since the first capture considered an Alert
 SECS_LAST_ALERT = 5  # seconds since the last Alert.
-lastpic = None  # GLOBAL
+DEFAULT_MASK = [120, 255, 700, 500]
 
 
-class TimestampIterator:
-    """
-    Stores the last three values received and returns True if there has been movement in
-    all the records the past 2 seconds (or SECS_DETECT_DELAY).
-    """
 
+class StatefulTimer:
     def __init__(self):
-        self.timestamps = deque(maxlen=3)
+        self.last_access = datetime.now()
+        self.locked = False
 
-    def call(self):
-        current_time = datetime.now()
-        self.timestamps.append(current_time)
+    def unlock(self):
+        self.locked = False
+        print("\033[92mTimer unlocked\033[0m")
 
-        has_x_motions = len(self.timestamps) == MOTIONS_DETECTED
-        is_on_time = current_time - self.timestamps[0] <= timedelta(SECS_LAST_MOVEMENT)
 
-        if has_x_motions and is_on_time:
+    def check(self):
+        now = datetime.now()
+
+        if not self.locked and self.last_access + timedelta(seconds=SECS_LAST_MOVEMENT) < now:
+            # It's an ALERT!
+            self.locked = True
+            # Start a timer to set 'locked' to False after 5 seconds
+            timer = threading.Timer(5, self.unlock)
+            timer.start()
             return True
 
         return False
+
 
 
 def read_frame(cap):
@@ -46,15 +54,18 @@ def read_frame(cap):
 
 
 def is_motion_detected(frame1, frame2, threshold_area, mask_rect):
+    # detection mask
     x1, y1, x2, y2 = mask_rect
     frame1_masked = frame1[y1:y2, x1:x2]
     frame2_masked = frame2[y1:y2, x1:x2]
 
+    # diff between frames
     diff = cv2.absdiff(frame1_masked, frame2_masked)
     blur = cv2.GaussianBlur(diff, (5, 5), 0)
     _, thresh = cv2.threshold(blur, 20, 255, cv2.THRESH_BINARY)
     dilated = cv2.dilate(thresh, None, iterations=3)
-    contours, _ = cv2.findContours(dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     motion_detected = False
     bounding_boxes = []
@@ -79,20 +90,17 @@ def draw_motion_boxes(frame, bounding_boxes, mask_rect):
         )
 
 
-def process_frames(cap, t, mask_rect):
-    global lastpic
-    timestamp_iterator = TimestampIterator()  # to record last three detections
+def process_frames(video_capture, threshold_area, mask_rect):
+    stateful_timer = StatefulTimer()
+    has_frame, _, reference_frame = read_frame(video_capture)
 
-    ret, _, reference_frame = read_frame(cap)
+    while has_frame:
+        has_frame, frame, gray_frame = read_frame(video_capture)
 
-    while ret:
-        ret, frame, gray_frame = read_frame(cap)
-        if not ret:
+        if not has_frame:
             break
 
-        motion_detected, bounding_boxes = is_motion_detected(
-            reference_frame, gray_frame, t, mask_rect
-        )
+        motion_detected, bounding_boxes = is_motion_detected(reference_frame, gray_frame, threshold_area, mask_rect)
 
         # Draw a white rectangle to visualize the mask area
         cv2.rectangle(
@@ -100,35 +108,57 @@ def process_frames(cap, t, mask_rect):
             (mask_rect[0], mask_rect[1]),
             (mask_rect[2], mask_rect[3]),
             (255, 255, 255),
-            2,
+            1,
         )
 
         if motion_detected:
             print(f"detection: {datetime.now()}")
             draw_motion_boxes(frame, bounding_boxes, mask_rect)
 
-            is_alert = timestamp_iterator.call()
-            has_lastpic = lastpic is not None and (
-                datetime.now() - lastpic
-            ) < timedelta(SECS_LAST_MOVEMENT)
+            is_alert = stateful_timer.check()
 
-            if is_alert and not has_lastpic:
-                lastpic = datetime.now()
-                print(
-                    f"\033[91mAlert recorded at {datetime.now()}\033[0m"
-                )  # print red: \033[91m.....[0m
+            if is_alert:
+                print(f"\033[91mAlert recorded at {datetime.now()}\033[0m")
+                threading.Thread(target=alert_triggered, args=(video_capture,)).start()
 
         reference_frame = gray_frame.copy()
+
+        # Frame display
         cv2.imshow("Frame", frame)
 
         # Exit pressing 'q'
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+def alert_triggered(video_capture):
+    end_time = datetime.now() + timedelta(seconds=5)
+    captured_frames = []
+
+    while datetime.now() < end_time:
+        ret, frame = video_capture.read()
+        if ret:
+            captured_frames.append(frame.copy())
+
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # You can change 'XVID' to another codec
+    fps = 20.0  # Set the FPS for the output video (you can adjust this value)
+    frame_size = (captured_frames[0].shape[1], captured_frames[0].shape[0])  # Width and Height of the frames
+    out = cv2.VideoWriter('alert_video.avi', fourcc, fps, frame_size)
+
+    for frame in captured_frames:
+        out.write(frame)
+
+    # Release everything when job is finished
+    out.release()
+
+    print("Alert video saved.")
+
+
 
 def main():
     # Parameters
-    parser = argparse.ArgumentParser(description="Motion Detection in Video Streams")
+    parser = argparse.ArgumentParser(
+        description="Motion Detection in Video Streams")
     parser.add_argument(
         "-u",
         "--url",
@@ -148,7 +178,7 @@ def main():
         "--mask",
         nargs=4,
         type=int,
-        default=[0, 275, 720, 720],
+        default=DEFAULT_MASK,
         help="Mask coordinates (x1 y1 x2 y2) for focusing motion detection on a specific area of the frame. Default is '0 400 720 720'.",
     )
     args = parser.parse_args()
