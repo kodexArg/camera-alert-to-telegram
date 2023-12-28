@@ -19,7 +19,6 @@ SECS_LAST_ALERT = 5  # seconds since the last Alert.
 DEFAULT_MASK = [120, 255, 700, 500]
 
 
-
 class StatefulTimer:
     def __init__(self):
         self.last_access = datetime.now()
@@ -28,7 +27,6 @@ class StatefulTimer:
     def unlock(self):
         self.locked = False
         print("\033[92mTimer unlocked\033[0m")
-
 
     def check(self):
         now = datetime.now()
@@ -42,7 +40,6 @@ class StatefulTimer:
             return True
 
         return False
-
 
 
 def read_frame(cap):
@@ -64,8 +61,7 @@ def is_motion_detected(frame1, frame2, threshold_area, mask_rect):
     blur = cv2.GaussianBlur(diff, (5, 5), 0)
     _, thresh = cv2.threshold(blur, 20, 255, cv2.THRESH_BINARY)
     dilated = cv2.dilate(thresh, None, iterations=3)
-    contours, _ = cv2.findContours(
-        dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     motion_detected = False
     bounding_boxes = []
@@ -130,6 +126,7 @@ def process_frames(video_capture, threshold_area, mask_rect):
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+
 def alert_triggered(video_capture):
     end_time = datetime.now() + timedelta(seconds=5)
     captured_frames = []
@@ -140,10 +137,10 @@ def alert_triggered(video_capture):
             captured_frames.append(frame.copy())
 
     # Define the codec and create VideoWriter object
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # You can change 'XVID' to another codec
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")  # You can change 'XVID' to another codec
     fps = 20.0  # Set the FPS for the output video (you can adjust this value)
     frame_size = (captured_frames[0].shape[1], captured_frames[0].shape[0])  # Width and Height of the frames
-    out = cv2.VideoWriter('alert_video.avi', fourcc, fps, frame_size)
+    out = cv2.VideoWriter("alert_video.avi", fourcc, fps, frame_size)
 
     for frame in captured_frames:
         out.write(frame)
@@ -154,11 +151,9 @@ def alert_triggered(video_capture):
     print("Alert video saved.")
 
 
-
 def main():
     # Parameters
-    parser = argparse.ArgumentParser(
-        description="Motion Detection in Video Streams")
+    parser = argparse.ArgumentParser(description="Motion Detection in Video Streams")
     parser.add_argument(
         "-u",
         "--url",
