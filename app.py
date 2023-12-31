@@ -6,17 +6,27 @@ import os
 import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from loguru import logger
 from telegram import Bot, Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 
+class Config:
+    @staticmethod
+    def load():
+        load_dotenv()
+        return {
+            "TOKEN": os.getenv("TOKEN"),
+            "CHAT_ID": os.getenv("CHAT_ID"),
+            "SECS_LAST_MOVEMENT": 2,
+            "SECS_LAST_ALERT": 20,
+            "SECS_SAVED_VIDEO": 4,
+            "DEFAULT_MASK": [120, 255, 700, 500],
+        }
 
-load_dotenv()
-SECS_LAST_MOVEMENT = 2
-SECS_LAST_ALERT = 20
-SECS_SAVED_VIDEO = 4
-DEFAULT_MASK = [120, 255, 700, 500]
+
+config = Config.load()
 
 
 class VideoSaverSingleton:
@@ -26,7 +36,7 @@ class VideoSaverSingleton:
     saving_video = False
 
     def __init__(self, rtsp_url):
-        self.rtsp_url=rtsp_url
+        self.rtsp_url = rtsp_url
 
     @classmethod
     def get_instance(cls):
@@ -36,7 +46,7 @@ class VideoSaverSingleton:
 
     def save_video(self, rtsp_url):
         if VideoSaverSingleton.saving_video:
-            print("Video is already being saved. Exiting...")
+            logger.warning("Video is already being saved. Exiting...")
             return
 
         VideoSaverSingleton.saving_video = True
@@ -46,7 +56,7 @@ class VideoSaverSingleton:
     def _save_video_process(self, rtsp_url):
         video_capture = cv2.VideoCapture(rtsp_url)
         if not video_capture.isOpened():
-            print("Failed to open video stream")
+            logger.error("Failed to open video stream")
             return
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -60,18 +70,18 @@ class VideoSaverSingleton:
             (frame_width, frame_height),
         )
 
-        end_time = datetime.now() + timedelta(seconds=SECS_SAVED_VIDEO)
+        end_time = datetime.now() + timedelta(seconds=config["SECS_SAVED_VIDEO"])
         while datetime.now() < end_time:
             ret, frame = video_capture.read()
             if ret:
                 out.write(frame)
             else:
-                print("Failed to capture frame")
+                logger.error("Failed to capture frame")
                 break
 
         video_capture.release()
         out.release()
-        print(f"\033[91m VIDEO SAVED {datetime.now()}\033[0m")
+        logger.success(f"VIDEO SAVED {datetime.now()}")
 
         self._send_video_telegram("output.mp4")
 
@@ -85,11 +95,11 @@ class StatefulTimer:
 
     def unlock(self):
         self.locked = False
-        print("\033[92mTimer unlocked\033[0m")
+        logger.info("Timer unlocked")
 
     def check(self):
         now = datetime.now()
-        if not self.locked and self.last_access + timedelta(seconds=SECS_LAST_MOVEMENT) < now:
+        if not self.locked and self.last_access + timedelta(seconds=config["SECS_LAST_MOVEMENT"]) < now:
             self.locked = True
             threading.Timer(5, self.unlock).start()
             return True
@@ -168,7 +178,7 @@ def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
         if motion_detected:
             draw_motion_boxes(frame, bounding_boxes, mask_rect)
             if stateful_timer.check():
-                print(f"\033[91mAlert recorded at {datetime.now()}\033[0m")
+                logger.info(f"Alert recorded at {datetime.now()}")
                 threading.Thread(target=alert_triggered, args=(rtsp_url,)).start()
 
         reference_frame = gray_frame.copy()
@@ -182,9 +192,9 @@ def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
             bot = Bot(token)
             chat_id = os.getenv("CHAT_ID")
             bot.send_video(chat_id, video=open(video_path, "rb"))
-            print("Video sent successfully")
+            logger.success("Video sent successfully")
         except TelegramError as e:
-            print(f"Error sending video: {e}")
+            logger.error(f"Error sending video: {e}")
 
 
 def alert_triggered(rtsp_url):
@@ -230,7 +240,7 @@ def main():
         "--mask",
         nargs=4,
         type=int,
-        default=DEFAULT_MASK,
+        default=config["DEFAULT_MASK"],
         help="Mask coordinates (x1 y1 x2 y2)",
     )
     args = parser.parse_args()
