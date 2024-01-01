@@ -10,39 +10,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from loguru import logger
 
-from telegram import Bot
-from telegram.ext import Application, CommandHandler
-
-class TelegramBot:
-    def __init__(self, token):
-        self.app = Application.builder().token(token).build()
-        self.setup_handlers()
-
-    def setup_handlers(self):
-        start_handler = CommandHandler("start", self.start_cmd)
-        echo_handler = CommandHandler("echo", self.echo_cmd)
-        self.app.add_handler(start_handler)
-        self.app.add_handler(echo_handler)
-
-    async def start_cmd(self, update, context):
-        logger.debug(f"started: {context}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Bot started!")
-
-    async def echo_cmd(self, update, context):
-        logger.debug(f"Echo: {context}")
-        user_message = update.message.text
-        await update.message.reply_text(user_message)
-
-    async def run(self):
-        logger.info("Bot initialized")
-        await self.app.initialize()
-        logger.info("Bot start!")
-        await self.app.start()
-
-    def stop(self):
-        self.app.stop()
-
-
+from telegram import Update, ForceReply
+from telegram.ext import ContextTypes, Application, CommandHandler
 
 
 class Config:
@@ -240,7 +209,7 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
 
 
 async def alert_triggered(rtsp_url):
-    # await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
+    await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
     pass
 
 
@@ -285,16 +254,19 @@ async def video_processing_task(args):
 
 
 async def telegram_bot_task():
-    logger.debug("TELEGRAM BOT TASK INIT")
-    bot = TelegramBot(config["TOKEN"])
-    try:
-        await bot.run()
-    except Exception as e:
-        logger.error(f"Telegram bot error: {e}")
+    """Start the bot."""
+    app = Application.builder().token(config["TOKEN"]).build()
+    app.add_handler(CommandHandler("start", start))
+    await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-async def start_cmd(context, update):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Bot started!")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /start is issued."""
+    user = update.effective_user
+    await update.message.reply_html(
+        rf"I see you, {user.mention_html()}.",
+        reply_markup=ForceReply(selective=True),
+    )
 
 
 async def main(args):
@@ -302,17 +274,6 @@ async def main(args):
     rtsp_url = args.url
     # VideoSaverSingleton.get_instance(rtsp_url)
     # video_task = asyncio.create_task(video_processing_task(args))
-
-    try:
-        telegram_task = asyncio.create_task(telegram_bot_task())
-        await asyncio.gather(telegram_task)
-    finally:
-        if not telegram_task.done():
-            telegram_task.cancel()
-            await telegram_task
-
-
-    # await asyncio.gather(telegram_task, video_task)
 
 
 config = config_loader()
