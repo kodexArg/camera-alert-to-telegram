@@ -1,8 +1,10 @@
 #!.venv/bin/python
+
 import asyncio
 import argparse
 import cv2
 import os
+import sys
 import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -17,7 +19,7 @@ class Config:
             "TOKEN": os.getenv("TOKEN"),
             "CHAT_ID": os.getenv("CHAT_ID"),
             "RTSP": os.getenv("RTSP"),
-            "SECS_LAST_MOVEMENT": 1,
+            "SECS_LAST_MOVEMENT": 0,
             "SECS_LAST_ALERT": 20,
             "SECS_SAVED_VIDEO": 4,
             "SECS_UNLOCK_AFTER_ALERT": 5,
@@ -54,16 +56,16 @@ class VideoSaverSingleton:
 
         VideoSaverSingleton.saving_video = True
         try:
-            await self._save_video_process(rtsp_url)
+            await asyncio.to_thread(self._save_video_process, rtsp_url)
         except Exception as e:
             logger.error(f"Error saving video: {e}")
         finally:
             VideoSaverSingleton.saving_video = False
             logger.info("Resetting saving_video flag to False")
 
-    async def _save_video_process(self, rtsp_url):
+    def _save_video_process(self, rtsp_url):
         #TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
-        video_capture = await cv2.VideoCapture(rtsp_url)
+        video_capture = cv2.VideoCapture(rtsp_url)
         if not video_capture.isOpened():
             logger.error("Failed to open video stream")
             raise Exception("Failed to open video stream")
@@ -73,7 +75,7 @@ class VideoSaverSingleton:
         frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         out = cv2.VideoWriter(
-            "output.mp4",
+            f"output_{datetime.now().strftime('%H:%M:%S')}.mp4",
             fourcc,
             fps,
             (frame_width, frame_height),
@@ -247,7 +249,6 @@ async def main(args):
     logger.debug("releasing and destroying all windows...")
     cap.release()
     cv2.destroyAllWindows()
-
 
 config = config_loader()
 args = parse_arguments()
