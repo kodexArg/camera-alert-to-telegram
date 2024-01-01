@@ -7,9 +7,6 @@ import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from loguru import logger
-from telegram import Bot, Update
-from telegram.error import TelegramError
-from telegram.ext import Application, CommandHandler, ContextTypes
 
 
 class Config:
@@ -19,45 +16,57 @@ class Config:
         return {
             "TOKEN": os.getenv("TOKEN"),
             "CHAT_ID": os.getenv("CHAT_ID"),
-            "SECS_LAST_MOVEMENT": 2,
+            "RTSP": os.getenv("RTSP"),
+            "SECS_LAST_MOVEMENT": 1,
             "SECS_LAST_ALERT": 20,
             "SECS_SAVED_VIDEO": 4,
+            "SECS_UNLOCK_AFTER_ALERT": 5,
             "DEFAULT_MASK": [120, 255, 700, 500],
+            "LOGGER_LEVEL": "DEBUG",
         }
-
-
-config = Config.load()
 
 
 class VideoSaverSingleton:
     """Singleton class to handle and allow one video saving at a time."""
 
     _instance = None
+    _lock = threading.Lock()
     saving_video = False
 
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
 
     @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
+    def get_instance(cls, rtsp_url=None):
+        with cls._lock:
+            """n00b tip: _lock is valid for all instances of this class, ensuring thtat
+            only one instance of this code snippet is being evaulated"""
+            if cls._instance is None:
+                if rtsp_url is None:
+                    raise ValueError("RTSP URL is required for the first initialization.")
+                cls._instance = cls(rtsp_url)
         return cls._instance
 
-    def save_video(self, rtsp_url):
+    async def save_video(self, rtsp_url):
         if VideoSaverSingleton.saving_video:
             logger.warning("Video is already being saved. Exiting...")
             return
 
         VideoSaverSingleton.saving_video = True
-        self._save_video_process(rtsp_url)
-        VideoSaverSingleton.saving_video = False
+        try:
+            await self._save_video_process(rtsp_url)
+        except Exception as e:
+            logger.error(f"Error saving video: {e}")
+        finally:
+            VideoSaverSingleton.saving_video = False
+            logger.info("Resetting saving_video flag to False")
 
-    def _save_video_process(self, rtsp_url):
-        video_capture = cv2.VideoCapture(rtsp_url)
+    async def _save_video_process(self, rtsp_url):
+        #TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
+        video_capture = await cv2.VideoCapture(rtsp_url)
         if not video_capture.isOpened():
             logger.error("Failed to open video stream")
-            return
+            raise Exception("Failed to open video stream")
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         fps = 10.0
@@ -74,6 +83,7 @@ class VideoSaverSingleton:
         while datetime.now() < end_time:
             ret, frame = video_capture.read()
             if ret:
+                # TODO: 
                 out.write(frame)
             else:
                 logger.error("Failed to capture frame")
@@ -81,29 +91,7 @@ class VideoSaverSingleton:
 
         video_capture.release()
         out.release()
-        logger.success(f"VIDEO SAVED {datetime.now()}")
-
-        self._send_video_telegram("output.mp4")
-
-
-class StatefulTimer:
-    """Manage state for actions, implementing a lock mechanism with a delay-based unlock."""
-
-    def __init__(self):
-        self.last_access = datetime.now()
-        self.locked = False
-
-    def unlock(self):
-        self.locked = False
-        logger.info("Timer unlocked")
-
-    def check(self):
-        now = datetime.now()
-        if not self.locked and self.last_access + timedelta(seconds=config["SECS_LAST_MOVEMENT"]) < now:
-            self.locked = True
-            threading.Timer(5, self.unlock).start()
-            return True
-        return False
+        logger.success(f"VIDEO SAVED")
 
 
 def read_frame(cap):
@@ -151,12 +139,20 @@ def draw_motion_boxes(frame, bounding_boxes, mask_rect):
         )
 
 
-def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
-    stateful_timer = StatefulTimer()
+async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
+    last_motion_time = None
+    last_alert_time = None
+    secs_last_movement = config["SECS_LAST_MOVEMENT"]
+    secs_last_alert = config["SECS_LAST_ALERT"]
+
     has_frame, _, reference_frame = read_frame(video_capture)
 
+    logger.debug("Main loop initialized...")
+
     while has_frame:
+        now = datetime.now()
         has_frame, frame, gray_frame = read_frame(video_capture)
+
         if not has_frame:
             break
 
@@ -176,56 +172,41 @@ def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
         )
 
         if motion_detected:
-            draw_motion_boxes(frame, bounding_boxes, mask_rect)
-            if stateful_timer.check():
-                logger.info(f"Alert recorded at {datetime.now()}")
-                threading.Thread(target=alert_triggered, args=(rtsp_url,)).start()
+            is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=secs_last_movement)
+            is_time_for_alert = last_alert_time is None or now - last_alert_time > timedelta(seconds=secs_last_alert)
 
-        reference_frame = gray_frame.copy()
+            if is_new_motion:
+                last_motion_time = now
+                logger.info("Motion detected")
+
+            if is_time_for_alert and is_new_motion:
+                last_alert_time = now
+                logger.info("Alert detected")
+
+                await alert_triggered(rtsp_url)
+
+        reference_frame = gray_frame.copy()  # used in the next comparisson
+
         cv2.imshow("Frame", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    def _send_video_telegram(self, video_path):
-        try:
-            token = os.getenv("TOKEN")
-            bot = Bot(token)
-            chat_id = os.getenv("CHAT_ID")
-            bot.send_video(chat_id, video=open(video_path, "rb"))
-            logger.success("Video sent successfully")
-        except TelegramError as e:
-            logger.error(f"Error sending video: {e}")
+    # Clean up
+    video_capture.release()
+    cv2.destroyAllWindows()
 
 
-def alert_triggered(rtsp_url):
-    VideoSaverSingleton.get_instance().save_video(rtsp_url)
+async def alert_triggered(rtsp_url):
+    await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
 
 
-async def chat_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    await context.bot.send_message(chat_id=chat_id, text=f"Your chat ID is: {chat_id}")
-
-
-def initialize_telegram_bot():
-    async def run_bot():
-        token = os.getenv("TOKEN")
-        application = Application.builder().token(token).build()
-        chat_id_handler = CommandHandler("chatid", chat_id_command)
-        application.add_handler(chat_id_handler)
-        await application.run_polling()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
-
-
-def main():
+def parse_arguments():
     parser = argparse.ArgumentParser(description="Motion Detection in Video Streams")
     parser.add_argument(
         "-u",
         "--url",
         type=str,
-        default=os.getenv("RTSP"),
+        default=config["RTSP"],
         help="RTSP URL of the camera",
     )
     parser.add_argument(
@@ -243,20 +224,36 @@ def main():
         default=config["DEFAULT_MASK"],
         help="Mask coordinates (x1 y1 x2 y2)",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def config_loader():
+    return Config.load()
+
+
+async def main(args):
     mask_rect = tuple(args.mask)
-    rtsp_url = args.url if args.url else os.getenv("RTSP")
-    if not rtsp_url:
-        raise ValueError("RTSP URL not found. Ensure your .env file has a valid RTSP variable.")
+    rtsp_url = args.url
+
+    VideoSaverSingleton.get_instance(rtsp_url)
+    logger.debug("singleton initialized, loading video...")
 
     cap = cv2.VideoCapture(rtsp_url)
-    process_frames(cap, args.threshold, mask_rect, rtsp_url=rtsp_url)
+    logger.debug("done. initiating main loop.\n\n")
+
+    # main loop
+    await process_frames(cap, args.threshold, mask_rect, rtsp_url)
+
+    logger.debug("releasing and destroying all windows...")
     cap.release()
     cv2.destroyAllWindows()
 
 
+config = config_loader()
+args = parse_arguments()
+
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=initialize_telegram_bot)
-    bot_thread.start()
-    main()
+    loglevel = config["LOGGER_LEVEL"]
+    logger.level(loglevel)
+    logger.info(f"Initializing with logger level {loglevel}")
+    asyncio.run(main(args))
