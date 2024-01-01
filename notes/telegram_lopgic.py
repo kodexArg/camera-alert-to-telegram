@@ -1,29 +1,26 @@
+from telegram import Bot
+from telegram.ext import Application, CommandHandler
 
-# def initialize_telegram_bot():
-#     async def run_bot():
-#         token = config["TOKEN"]
-#         application = Application.builder().token(token).build()
-#         chat_id_handler = CommandHandler("chatid", chat_id_command)
-#         application.add_handler(chat_id_handler)
-#         await application.run_polling()
+class TelegramBot:
+    def __init__(self):
+        self.token = config["TOKEN"]
+        self.app = Application.builder().token(self.token).build()
+        self.setup_handlers()
 
-#     loop = asyncio.new_event_loop()
-#     asyncio.set_event_loop(loop)
-#     loop.run_until_complete(run_bot())
+    def setup_handlers(self):
+        start_handler = CommandHandler("start", self.start_cmd)
+        self.app.add_handler(start_handler)
+
+    async def start_cmd(self, update, context):
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello! I'm your bot.")
+
+    async def run(self):
+        await self.app.start_polling()
+
+    def stop(self):
+        self.app.stop()
 
 
-# async def chat_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-#     chat_id = update.effective_chat.id
-#     await context.bot.send_message(chat_id=chat_id, text=f"Your chat ID is: {chat_id}")
-
-
-    def _send_video_telegram(self, video_path):
-
-        try:
-            token = os.getenv("TOKEN")
-            bot = Bot(token)
-            chat_id = os.getenv("CHAT_ID")
-            bot.send_video(chat_id, video=open(video_path, "rb"))
-            logger.success("Video sent successfully")
-        except TelegramError as e:
-            logger.error(f"Error sending video: {e}")
+# then call it with:
+#     telegram_task = asyncio.create_task(telegram_bot_task())
+#     await asyncio.gather(..., telegram_task)
