@@ -98,7 +98,7 @@ class VideoSaverSingleton:
         while datetime.now() < end_time:
             ret, frame = video_capture.read()
             if ret:
-                # TODO: 
+                # TODO:
                 out.write(frame)
             else:
                 logger.error("Failed to capture frame")
@@ -166,7 +166,7 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
 
     logger.debug("Main loop initialized...")
 
-    frame_interval = 1.0 / config["FPS"]  
+    frame_interval = 1.0 / config["FPS"]
 
     while has_frame:
         now = datetime.now()
@@ -225,7 +225,6 @@ async def alert_triggered(rtsp_url):
 async def send_video_to_telegram(video_filename):
     bot = Bot(config["TOKEN"])
     with open(video_filename, "rb") as video_file:
-        logger.info(f"sending file {video_filename} to telegram...")
         await asyncio.to_thread(bot.send_video, config["CHAT_ID"], video=video_file)
 
 
