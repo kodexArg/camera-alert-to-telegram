@@ -33,6 +33,8 @@ class Config:
                 int(os.getenv("DEFAULT_MASK_Y2", "500")),
             ],
             "LOGGER_LEVEL": os.getenv("LOGGER_LEVEL", "DEBUG"),
+            "FPS": int(os.getenv("FPS", 24)),
+            "SENSITIVITY": int(os.getenv("SENSITIVITY", 1000))
         }
 
 
@@ -165,7 +167,6 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
     has_frame, _, reference_frame = read_frame(video_capture)
 
     logger.debug("Main loop initialized...")
-
     frame_interval = 1.0 / config["FPS"]
 
     while has_frame:
@@ -211,6 +212,14 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+        # This is a FPS limiter (default to 24 FPS)
+        frame_end_time = datetime.now()
+        elapsed = (frame_end_time - now).total_seconds()
+        time_to_wait = frame_interval - elapsed
+
+        if time_to_wait > 0:
+            await asyncio.sleep(time_to_wait)
+
     # Clean up
     video_capture.release()
     cv2.destroyAllWindows()
@@ -225,10 +234,11 @@ async def alert_triggered(rtsp_url):
 async def send_video_to_telegram(video_filename):
     bot = Bot(config["TOKEN"])
     with open(video_filename, "rb") as video_file:
-        await asyncio.to_thread(bot.send_video, config["CHAT_ID"], video=video_file)
+        await bot.send_video(config["CHAT_ID"], video=video_file)
 
 
 def parse_arguments():
+    # TODO: arguments should resemble virtual envs
     parser = argparse.ArgumentParser(description="Motion Detection in Video Streams")
     parser.add_argument(
         "-u",
@@ -241,7 +251,7 @@ def parse_arguments():
         "-t",
         "--threshold",
         type=int,
-        default=1000,
+        default=config["SENSITIVITY"],
         help="Threshold area for motion detection",
     )
     parser.add_argument(
@@ -266,13 +276,17 @@ async def main(args):
     VideoSaverSingleton.get_instance(rtsp_url)
     cap = cv2.VideoCapture(rtsp_url)
 
+    logger.debug("Building Bot...")
     bot_app = ApplicationBuilder().token(config["TOKEN"]).build()
     bot_app.add_handler(CommandHandler("start", start))
 
     await bot_app.initialize()
     await bot_app.start()
 
+    logger.debug("Starting polling...")
     await bot_app.updater.start_polling()
+
+    logger.debug("Processing frames...")
     await process_frames(cap, args.threshold, mask_rect, rtsp_url)
 
     # Clean up for video processing + telegram bot
