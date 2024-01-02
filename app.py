@@ -9,6 +9,8 @@ import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from loguru import logger
+from telegram import Update, ForceReply
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 
 class Config:
@@ -17,7 +19,6 @@ class Config:
         load_dotenv()
         return {
             "TOKEN": os.getenv("TOKEN"),
-            "CHAT_ID": os.getenv("CHAT_ID"),
             "RTSP": os.getenv("RTSP"),
             "SECS_LAST_MOVEMENT": 0,
             "SECS_LAST_ALERT": 20,
@@ -64,7 +65,7 @@ class VideoSaverSingleton:
             logger.info("Resetting saving_video flag to False")
 
     def _save_video_process(self, rtsp_url):
-        #TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
+        # TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
         video_capture = cv2.VideoCapture(rtsp_url)
         if not video_capture.isOpened():
             logger.error("Failed to open video stream")
@@ -85,7 +86,7 @@ class VideoSaverSingleton:
         while datetime.now() < end_time:
             ret, frame = video_capture.read()
             if ret:
-                # TODO: 
+                # TODO:
                 out.write(frame)
             else:
                 logger.error("Failed to capture frame")
@@ -238,23 +239,36 @@ async def main(args):
     rtsp_url = args.url
 
     VideoSaverSingleton.get_instance(rtsp_url)
-    logger.debug("singleton initialized, loading video...")
-
     cap = cv2.VideoCapture(rtsp_url)
-    logger.debug("done. initiating main loop.\n\n")
 
-    # main loop
+    bot_app = ApplicationBuilder().token(config["TOKEN"]).build()
+    bot_app.add_handler(CommandHandler("start", start))
+
+    await bot_app.initialize()
+    await bot_app.start()
+
+    await bot_app.updater.start_polling()
     await process_frames(cap, args.threshold, mask_rect, rtsp_url)
 
+    # Clean up for video processing + telegram bot
     logger.debug("releasing and destroying all windows...")
     cap.release()
     cv2.destroyAllWindows()
+    await bot_app.updater.stop()
+    await bot_app.shutdown()
+
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    await update.message.reply_html(f"I see you, {user.mention_html()}.", reply_markup=ForceReply(selective=True))
+
 
 config = config_loader()
 args = parse_arguments()
 
 if __name__ == "__main__":
-    loglevel = config["LOGGER_LEVEL"]
-    logger.level(loglevel)
-    logger.info(f"Initializing with logger level {loglevel}")
+    logger_level = config["LOGGER_LEVEL"]
+    logger.level(logger_level)
+    logger.info(f"Initializing with logger level {logger_level}")
     asyncio.run(main(args))
