@@ -9,7 +9,7 @@ import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from loguru import logger
-from telegram import Update, ForceReply
+from telegram import Update, ForceReply, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 
@@ -19,6 +19,7 @@ class Config:
         load_dotenv()
         return {
             "TOKEN": os.getenv("TOKEN"),
+            "CHAT_ID": os.getenv("CHAT_ID"),
             "RTSP": os.getenv("RTSP"),
             "SECS_LAST_MOVEMENT": 0,
             "SECS_LAST_ALERT": 20,
@@ -26,6 +27,7 @@ class Config:
             "SECS_UNLOCK_AFTER_ALERT": 5,
             "DEFAULT_MASK": [120, 255, 700, 500],
             "LOGGER_LEVEL": "DEBUG",
+            "FPS": os.getenv("FPS", 24)
         }
 
 
@@ -50,21 +52,25 @@ class VideoSaverSingleton:
                 cls._instance = cls(rtsp_url)
         return cls._instance
 
-    async def save_video(self, rtsp_url):
+    async def save_video(self, rtsp_url) -> str:
+        """Get (then return) the video filename from the private method _save_video_process"""
         if VideoSaverSingleton.saving_video:
             logger.warning("Video is already being saved. Exiting...")
             return
 
         VideoSaverSingleton.saving_video = True
         try:
-            await asyncio.to_thread(self._save_video_process, rtsp_url)
+            video_filename = await asyncio.to_thread(self._save_video_process, rtsp_url)
         except Exception as e:
             logger.error(f"Error saving video: {e}")
         finally:
             VideoSaverSingleton.saving_video = False
             logger.info("Resetting saving_video flag to False")
 
-    def _save_video_process(self, rtsp_url):
+        return video_filename
+
+    def _save_video_process(self, rtsp_url) -> str:
+        """Returns the video filename"""
         # TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
         video_capture = cv2.VideoCapture(rtsp_url)
         if not video_capture.isOpened():
@@ -75,8 +81,9 @@ class VideoSaverSingleton:
         fps = 10.0
         frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_filename = f"cap_{datetime.now().strftime('%H:%M:%S')}.mp4"
         out = cv2.VideoWriter(
-            f"output_{datetime.now().strftime('%H:%M:%S')}.mp4",
+            video_filename,
             fourcc,
             fps,
             (frame_width, frame_height),
@@ -95,6 +102,8 @@ class VideoSaverSingleton:
         video_capture.release()
         out.release()
         logger.success(f"VIDEO SAVED")
+
+        return video_filename
 
 
 def read_frame(cap):
@@ -152,6 +161,8 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
 
     logger.debug("Main loop initialized...")
 
+    frame_interval = 1.0 / config["FPS"]  
+
     while has_frame:
         now = datetime.now()
         has_frame, frame, gray_frame = read_frame(video_capture)
@@ -200,7 +211,16 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
 
 
 async def alert_triggered(rtsp_url):
-    await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
+    saved_file_path = await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
+    if saved_file_path:
+        await send_video_to_telegram(saved_file_path)
+
+
+async def send_video_to_telegram(video_filename):
+    bot = Bot(config["TOKEN"])
+    with open(video_filename, "rb") as video_file:
+        logger.info(f"sending file {video_filename} to telegram...")
+        await asyncio.to_thread(bot.send_video, config["CHAT_ID"], video=video_file)
 
 
 def parse_arguments():
@@ -258,14 +278,15 @@ async def main(args):
     await bot_app.shutdown()
 
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
     user = update.effective_user
-    await update.message.reply_html(f"I see you, {user.mention_html()}.", reply_markup=ForceReply(selective=True))
+    await update.message.reply_html(f"I see you, {user.mention_html()}.\nYour chat id is {chat_id}.", reply_markup=ForceReply(selective=True))
 
 
 config = config_loader()
 args = parse_arguments()
+
 
 if __name__ == "__main__":
     logger_level = config["LOGGER_LEVEL"]
