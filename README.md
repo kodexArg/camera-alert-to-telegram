@@ -24,7 +24,7 @@ FPS=24
 ```
 
 ## TODO
-[] keep a permanent cache of X seconds (prolly 1 second) so the user can see the movement trigger
-[] normalize parameters and virtual environment
-[] multiple chat_id and chat_id registration using a bot command
-[] video rotation to save space
+- [] keep a permanent cache of X seconds (prolly 1 second) so the user can see the movement trigger
+- [] normalize parameters and virtual environment
+- [] multiple chat_id and chat_id registration using a bot command
+- [] video rotation to save space
