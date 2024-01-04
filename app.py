@@ -156,15 +156,15 @@ def draw_motion_boxes(frame, bounding_boxes, mask_rect):
 
 def display_frame(frame):
     cv2.imshow("Frame", frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         raise Exception("Quit")
 
 
-def initialize_processing(args):
-    # MOG2
+def initialize_processing():
+    logger.debug(f"initializing MOG2 subtractor...")
     mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
     last_motion_time = last_alert_time = None
-    frame_interval = 1.0 / args.FPS
+    frame_interval = 1.0 / config["FPS"]
     return mog2_subtractor, last_motion_time, last_alert_time, frame_interval
 
 
@@ -197,14 +197,26 @@ async def handle_motion_detection(motion_detected, last_motion_time, last_alert_
     return last_motion_time, last_alert_time
 
 
+def draw_white_box(frame, mask_rect):
+    cv2.rectangle(
+        frame,
+        (mask_rect[0], mask_rect[1]),
+        (mask_rect[2], mask_rect[3]),
+        (255, 255, 255),
+        1,
+    )
+
+
 async def process_frames(video_capture, args, mask_rect, rtsp_url):
-    mog2_subtractor, last_motion_time, last_alert_time, frame_interval = initialize_processing(args)
+    mog2_subtractor, last_motion_time, last_alert_time, frame_interval = initialize_processing()
     logger.debug("Main loop initialized...")
 
     while True:
         has_frame, frame, gray_frame = read_frame(video_capture)
         if not has_frame:
             break
+
+        draw_white_box(frame, mask_rect)
 
         try:
             motion_detected = await handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask_rect)
