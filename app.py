@@ -34,7 +34,7 @@ class Config:
             ],
             "LOGGER_LEVEL": os.getenv("LOGGER_LEVEL", "DEBUG"),
             "FPS": int(os.getenv("FPS", 24)),
-            "SENSITIVITY": int(os.getenv("SENSITIVITY", 1000))
+            "SENSITIVITY": int(os.getenv("SENSITIVITY", 1000)),
         }
 
 
@@ -124,21 +124,17 @@ def read_frame(cap):
     )
 
 
-def is_motion_detected(frame1, frame2, threshold_area, mask_rect):
+def is_motion_detected_with_mask(fg_mask, threshold, mask_rect):
     x1, y1, x2, y2 = mask_rect
-    frame1_masked = frame1[y1:y2, x1:x2]
-    frame2_masked = frame2[y1:y2, x1:x2]
+    fg_mask_cropped = fg_mask[y1:y2, x1:x2]
 
-    diff = cv2.absdiff(frame1_masked, frame2_masked)
-    blur = cv2.GaussianBlur(diff, (5, 5), 0)
-    _, thresh = cv2.threshold(blur, 20, 255, cv2.THRESH_BINARY)
-    dilated = cv2.dilate(thresh, None, iterations=3)
+    dilated = cv2.dilate(fg_mask_cropped, None, iterations=3)
     contours, _ = cv2.findContours(dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     motion_detected = False
     bounding_boxes = []
     for contour in contours:
-        if cv2.contourArea(contour) > threshold_area:
+        if cv2.contourArea(contour) > threshold:
             x, y, w, h = cv2.boundingRect(contour)
             bounding_boxes.append((x, y, w, h))
             motion_detected = True
@@ -158,7 +154,13 @@ def draw_motion_boxes(frame, bounding_boxes, mask_rect):
         )
 
 
-async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
+
+
+
+async def process_frames(video_capture, args, mask_rect, rtsp_url):
+    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
+
+    logger.debug(f"working with --vid == {args.vid}")
     last_motion_time = None
     last_alert_time = None
     secs_last_movement = config["SECS_LAST_MOVEMENT"]
@@ -170,47 +172,60 @@ async def process_frames(video_capture, threshold_area, mask_rect, rtsp_url):
     frame_interval = 1.0 / config["FPS"]
 
     while has_frame:
-        now = datetime.now()
-        has_frame, frame, gray_frame = read_frame(video_capture)
+        try:
+            now = datetime.now()
+            has_frame, frame, gray_frame = read_frame(video_capture)
 
-        if not has_frame:
-            break
+            if not has_frame:
+                break
 
-        motion_detected, bounding_boxes = is_motion_detected(
-            reference_frame,
-            gray_frame,
-            threshold_area,
-            mask_rect,
-        )
+            # Apply MOG2
+            fg_mask = mog2_subtractor.apply(gray_frame)
+            _, fg_mask = cv2.threshold(fg_mask, 250, 255, cv2.THRESH_BINARY)
+            motion_detected, bounding_boxes = is_motion_detected_with_mask(fg_mask, args.threshold, mask_rect)
 
-        cv2.rectangle(
-            frame,
-            (mask_rect[0], mask_rect[1]),
-            (mask_rect[2], mask_rect[3]),
-            (255, 255, 255),
-            1,
-        )
+            # replaced by is_motion_detected_with_mask, but
+            # TODO: Strategy Pattern is required to pick between frame diff and MOG2 (among others)
+            # motion_detected, bounding_boxes = is_motion_detected(
+            #     reference_frame,
+            #     gray_frame,
+            #     args.threshold,
+            #     mask_rect,
 
-        if motion_detected:
-            draw_motion_boxes(frame, bounding_boxes, mask_rect)
-            is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=secs_last_movement)
-            is_time_for_alert = last_alert_time is None or now - last_alert_time > timedelta(seconds=secs_last_alert)
+            cv2.rectangle(
+                frame,
+                (mask_rect[0], mask_rect[1]),
+                (mask_rect[2], mask_rect[3]),
+                (255, 255, 255),
+                1,
+            )
 
-            if is_new_motion:
-                last_motion_time = now
-                logger.info("Motion detected")
+            if motion_detected:
+                draw_motion_boxes(frame, bounding_boxes, mask_rect)
+                is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=secs_last_movement)
+                is_time_for_alert = last_alert_time is None or now - last_alert_time > timedelta(seconds=secs_last_alert)
 
-            if is_time_for_alert and is_new_motion:
-                last_alert_time = now
-                logger.info("Alert detected")
+                if is_new_motion:
+                    last_motion_time = now
+                    logger.info("Motion detected")
 
-                await alert_triggered(rtsp_url)
+                if is_time_for_alert and is_new_motion:
+                    last_alert_time = now
+                    logger.info("Alert detected")
 
-        reference_frame = gray_frame.copy()  # used in the next comparisson
+                    await alert_triggered(rtsp_url)
 
-        cv2.imshow("Frame", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+            reference_frame = gray_frame.copy()  # used in the next comparisson
+
+            if args.vid:
+                cv2.imshow("Frame", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+        except Exception as e:
+            logger.error(f"Error processing frame: {e}")
+            logger.debug(f"Parameters: {args}")
+            raise RuntimeError(e)
 
         # This is a FPS limiter (default to 24 FPS)
         frame_end_time = datetime.now()
@@ -240,6 +255,11 @@ async def send_video_to_telegram(video_filename):
 def parse_arguments():
     # TODO: arguments should resemble virtual envs
     parser = argparse.ArgumentParser(description="Motion Detection in Video Streams")
+    parser.add_argument(
+        "--vid",
+        action="store_true",
+        help="Display video window if set",
+    )
     parser.add_argument(
         "-u",
         "--url",
@@ -287,7 +307,7 @@ async def main(args):
     await bot_app.updater.start_polling()
 
     logger.debug("Processing frames...")
-    await process_frames(cap, args.threshold, mask_rect, rtsp_url)
+    await process_frames(cap, args, mask_rect, rtsp_url)
 
     # Clean up for video processing + telegram bot
     logger.debug("releasing and destroying all windows...")
