@@ -154,88 +154,70 @@ def draw_motion_boxes(frame, bounding_boxes, mask_rect):
         )
 
 
+def display_frame(frame):
+    cv2.imshow("Frame", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        raise Exception("Quit")
 
+
+def initialize_processing(args):
+    # MOG2
+    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
+    last_motion_time = last_alert_time = None
+    frame_interval = 1.0 / args.FPS
+    return mog2_subtractor, last_motion_time, last_alert_time, frame_interval
+
+
+async def handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask_rect):
+    fg_mask = mog2_subtractor.apply(gray_frame)
+    _, fg_mask = cv2.threshold(fg_mask, 250, 255, cv2.THRESH_BINARY)
+    motion_detected, bounding_boxes = is_motion_detected_with_mask(fg_mask, args.threshold, mask_rect)
+    if motion_detected:
+        draw_motion_boxes(frame, bounding_boxes, mask_rect)
+        return True
+    return False
+
+
+async def handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url):
+    if motion_detected:
+        now = datetime.now()
+        is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=config["SECS_LAST_MOVEMENT"])
+        is_time_for_alert = last_alert_time is None or now - last_alert_time > timedelta(seconds=config["SECS_LAST_ALERT"])
+
+        if is_new_motion:
+            last_motion_time = now
+            logger.info("Motion detected")
+
+        if is_time_for_alert and is_new_motion:
+            last_alert_time = now
+            logger.info("Alert detected")
+            await alert_triggered(rtsp_url)
+
+        return last_motion_time, last_alert_time
+    return last_motion_time, last_alert_time
 
 
 async def process_frames(video_capture, args, mask_rect, rtsp_url):
-    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
-
-    logger.debug(f"working with --vid == {args.vid}")
-    last_motion_time = None
-    last_alert_time = None
-    secs_last_movement = config["SECS_LAST_MOVEMENT"]
-    secs_last_alert = config["SECS_LAST_ALERT"]
-
-    has_frame, _, reference_frame = read_frame(video_capture)
-
+    mog2_subtractor, last_motion_time, last_alert_time, frame_interval = initialize_processing(args)
     logger.debug("Main loop initialized...")
-    frame_interval = 1.0 / config["FPS"]
 
-    while has_frame:
+    while True:
+        has_frame, frame, gray_frame = read_frame(video_capture)
+        if not has_frame:
+            break
+
         try:
-            now = datetime.now()
-            has_frame, frame, gray_frame = read_frame(video_capture)
-
-            if not has_frame:
-                break
-
-            # Apply MOG2
-            fg_mask = mog2_subtractor.apply(gray_frame)
-            _, fg_mask = cv2.threshold(fg_mask, 250, 255, cv2.THRESH_BINARY)
-            motion_detected, bounding_boxes = is_motion_detected_with_mask(fg_mask, args.threshold, mask_rect)
-
-            # replaced by is_motion_detected_with_mask, but
-            # TODO: Strategy Pattern is required to pick between frame diff and MOG2 (among others)
-            # motion_detected, bounding_boxes = is_motion_detected(
-            #     reference_frame,
-            #     gray_frame,
-            #     args.threshold,
-            #     mask_rect,
-
-            cv2.rectangle(
-                frame,
-                (mask_rect[0], mask_rect[1]),
-                (mask_rect[2], mask_rect[3]),
-                (255, 255, 255),
-                1,
-            )
-
-            if motion_detected:
-                draw_motion_boxes(frame, bounding_boxes, mask_rect)
-                is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=secs_last_movement)
-                is_time_for_alert = last_alert_time is None or now - last_alert_time > timedelta(seconds=secs_last_alert)
-
-                if is_new_motion:
-                    last_motion_time = now
-                    logger.info("Motion detected")
-
-                if is_time_for_alert and is_new_motion:
-                    last_alert_time = now
-                    logger.info("Alert detected")
-
-                    await alert_triggered(rtsp_url)
-
-            reference_frame = gray_frame.copy()  # used in the next comparisson
+            motion_detected = await handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask_rect)
+            last_motion_time, last_alert_time = await handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url)
 
             if args.vid:
-                cv2.imshow("Frame", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                display_frame(frame)
 
+            await asyncio.sleep(frame_interval)
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
-            logger.debug(f"Parameters: {args}")
-            raise RuntimeError(e)
+            break
 
-        # This is a FPS limiter (default to 24 FPS)
-        frame_end_time = datetime.now()
-        elapsed = (frame_end_time - now).total_seconds()
-        time_to_wait = frame_interval - elapsed
-
-        if time_to_wait > 0:
-            await asyncio.sleep(time_to_wait)
-
-    # Clean up
     video_capture.release()
     cv2.destroyAllWindows()
 
