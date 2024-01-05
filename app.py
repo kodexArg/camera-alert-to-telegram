@@ -4,10 +4,12 @@ import asyncio
 import argparse
 import cv2
 import os
+import glob
 import sys
 import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from collections import deque
 from loguru import logger
 from telegram import Update, ForceReply, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -19,22 +21,24 @@ class Config:
         load_dotenv()  # .env file required
 
         return {
-            "TOKEN": os.getenv("TOKEN"),
-            "CHAT_ID": os.getenv("CHAT_ID"),
-            "RTSP": os.getenv("RTSP"),
+            "TOKEN": os.getenv("TOKEN"),  # Required in .env
+            "CHAT_ID": os.getenv("CHAT_ID"),  # Required in .env
+            "RTSP": os.getenv("RTSP"),  # Required in .env
             "SECS_LAST_MOVEMENT": int(os.getenv("SECS_LAST_MOVEMENT", "0")),
             "SECS_LAST_ALERT": int(os.getenv("SECS_LAST_ALERT", "20")),
             "SECS_SAVED_VIDEO": int(os.getenv("SECS_SAVED_VIDEO", "4")),
             "SECS_UNLOCK_AFTER_ALERT": int(os.getenv("SECS_UNLOCK_AFTER_ALERT", "5")),
             "DEFAULT_MASK": [
-                int(os.getenv("DEFAULT_MASK_X1", "120")),
-                int(os.getenv("DEFAULT_MASK_Y1", "255")),
+                int(os.getenv("DEFAULT_MASK_X1", "0")),
+                int(os.getenv("DEFAULT_MASK_Y1", "0")),
                 int(os.getenv("DEFAULT_MASK_X2", "700")),
                 int(os.getenv("DEFAULT_MASK_Y2", "500")),
             ],
             "LOGGER_LEVEL": os.getenv("LOGGER_LEVEL", "DEBUG"),
             "FPS": int(os.getenv("FPS", 24)),
             "SENSITIVITY": int(os.getenv("SENSITIVITY", 1000)),
+            "MAX_VIDEO_FILES": int(os.getenv("MAX_VIDEO_FILES", 5)),
+            "FRAME_CACHE": int(os.getenv("FRAME_CACHE", 10)),
         }
 
 
@@ -47,6 +51,8 @@ class VideoSaverSingleton:
 
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
+        if not os.path.exists("./videos/"):
+            os.makedirs("./videos/")
 
     @classmethod
     def get_instance(cls, rtsp_url=None):
@@ -59,36 +65,53 @@ class VideoSaverSingleton:
                 cls._instance = cls(rtsp_url)
         return cls._instance
 
-    async def save_video(self, rtsp_url) -> str:
+    def check_and_delete_oldest_video(self):
+        video_files = glob.glob("./videos/*.mp4")
+        if len(video_files) > config["MAX_VIDEO_FILES"]:
+            oldest_file = min(video_files, key=os.path.getctime)
+            logger.info(f"Deleting oldest video file: {oldest_file}")
+            os.remove(oldest_file)
+
+    async def save_video(self, rtsp_url, frame_cache) -> str:
         """Get (then return) the video filename from the private method _save_video_process"""
+
         if VideoSaverSingleton.saving_video:
             logger.warning("Video is already being saved. Exiting...")
             return
 
         VideoSaverSingleton.saving_video = True
+
+        self.check_and_delete_oldest_video()  # rotation of video files (default=20)
+
         try:
-            video_filename = await asyncio.to_thread(self._save_video_process, rtsp_url)
+            temp_video_filename = await asyncio.to_thread(self._save_video_process, rtsp_url)
+            final_video_filename = self._combine_cached_with_live(temp_video_filename, frame_cache)
         except Exception as e:
             logger.error(f"Error saving video: {e}")
+            final_video_filename = None
         finally:
             VideoSaverSingleton.saving_video = False
             logger.info("Resetting saving_video flag to False")
+        os.remove(temp_video_filename)  # Remove the temporary file
 
-        return video_filename
+        return final_video_filename
 
     def _save_video_process(self, rtsp_url) -> str:
-        """Returns the video filename"""
+        """Write live frames directly to disk"""
         # TODO: cv2.VideoCapture can be asynced? otherwise _save_video_process to sync.
+
         video_capture = cv2.VideoCapture(rtsp_url)
+
         if not video_capture.isOpened():
             logger.error("Failed to open video stream")
             raise Exception("Failed to open video stream")
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        # Video Writer
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v") 
         fps = 10.0
         frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        video_filename = f"cap_{datetime.now().strftime('%H:%M:%S')}.mp4"
+        video_filename = f"./videos/cap_{datetime.now().strftime('%Y%m%d_%H:%M:%S')}.mp4"
         out = cv2.VideoWriter(
             video_filename,
             fourcc,
@@ -97,6 +120,8 @@ class VideoSaverSingleton:
         )
 
         end_time = datetime.now() + timedelta(seconds=config["SECS_SAVED_VIDEO"])
+
+        # saving subsequent frames to disk!
         while datetime.now() < end_time:
             ret, frame = video_capture.read()
             if ret:
@@ -111,6 +136,37 @@ class VideoSaverSingleton:
         logger.success(f"VIDEO SAVED")
 
         return video_filename
+
+    def _combine_cached_with_live(self, temp_video_filename, frame_cache) -> str:
+        # Determine parameters from the temporary video file
+        temp_capture = cv2.VideoCapture(temp_video_filename)
+        if not temp_capture.isOpened():
+            logger.error("Failed to open temporary video stream")
+            return None
+
+        fps = temp_capture.get(cv2.CAP_PROP_FPS)
+        frame_width = int(temp_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(temp_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+        final_video_filename = f"./videos/cap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        out = cv2.VideoWriter(final_video_filename, fourcc, fps, (frame_width, frame_height))
+
+        # Write cached frames
+        for cached_frame, _ in frame_cache:
+            out.write(cached_frame)
+
+        # Append frames from the temporary video
+        while True:
+            ret, frame = temp_capture.read()
+            if not ret:
+                break
+            out.write(frame)
+
+        temp_capture.release()
+        out.release()
+
+        return final_video_filename
 
 
 def read_frame(cap):
@@ -165,7 +221,10 @@ def initialize_processing():
     mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
     last_motion_time = last_alert_time = None
     frame_interval = 1.0 / config["FPS"]
-    return mog2_subtractor, last_motion_time, last_alert_time, frame_interval
+
+    # Frames Cache logic
+    frame_cache = deque(maxlen=config["FRAME_CACHE"])
+    return mog2_subtractor, last_motion_time, last_alert_time, frame_interval, frame_cache
 
 
 async def handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask_rect):
@@ -178,7 +237,7 @@ async def handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask
     return False
 
 
-async def handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url):
+async def handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url, frame_cache):
     if motion_detected:
         now = datetime.now()
         is_new_motion = last_motion_time is None or now - last_motion_time > timedelta(seconds=config["SECS_LAST_MOVEMENT"])
@@ -191,7 +250,7 @@ async def handle_motion_detection(motion_detected, last_motion_time, last_alert_
         if is_time_for_alert and is_new_motion:
             last_alert_time = now
             logger.info("Alert detected")
-            await alert_triggered(rtsp_url)
+            await alert_triggered(rtsp_url, frame_cache)
 
         return last_motion_time, last_alert_time
     return last_motion_time, last_alert_time
@@ -208,7 +267,7 @@ def draw_white_box(frame, mask_rect):
 
 
 async def process_frames(video_capture, args, mask_rect, rtsp_url):
-    mog2_subtractor, last_motion_time, last_alert_time, frame_interval = initialize_processing()
+    mog2_subtractor, last_motion_time, last_alert_time, frame_interval, frame_cache = initialize_processing()
     logger.debug("Main loop initialized...")
 
     while True:
@@ -217,10 +276,11 @@ async def process_frames(video_capture, args, mask_rect, rtsp_url):
             break
 
         draw_white_box(frame, mask_rect)
+        frame_cache.append((frame, gray_frame))  # Append the new frame to the cache
 
         try:
             motion_detected = await handle_frame_processing(frame, gray_frame, mog2_subtractor, args, mask_rect)
-            last_motion_time, last_alert_time = await handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url)
+            last_motion_time, last_alert_time = await handle_motion_detection(motion_detected, last_motion_time, last_alert_time, rtsp_url, frame_cache)
 
             if args.vid:
                 display_frame(frame)
@@ -233,9 +293,8 @@ async def process_frames(video_capture, args, mask_rect, rtsp_url):
     video_capture.release()
     cv2.destroyAllWindows()
 
-
-async def alert_triggered(rtsp_url):
-    saved_file_path = await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url)
+async def alert_triggered(rtsp_url, frame_cache):
+    saved_file_path = await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url, frame_cache)
     if saved_file_path:
         await send_video_to_telegram(saved_file_path)
 
