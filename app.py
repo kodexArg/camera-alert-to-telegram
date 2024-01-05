@@ -5,7 +5,6 @@ import argparse
 import cv2
 import os
 import glob
-import sys
 import threading
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -107,7 +106,7 @@ class VideoSaverSingleton:
             raise Exception("Failed to open video stream")
 
         # Video Writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v") 
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         fps = 10.0
         frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -292,6 +291,7 @@ async def process_frames(video_capture, args, mask_rect, rtsp_url):
 
     video_capture.release()
     cv2.destroyAllWindows()
+
 
 async def alert_triggered(rtsp_url, frame_cache):
     saved_file_path = await VideoSaverSingleton.get_instance(rtsp_url).save_video(rtsp_url, frame_cache)
