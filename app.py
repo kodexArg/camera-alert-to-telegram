@@ -48,7 +48,7 @@ class Config:
         cls.show_video = os.getenv("SHOW_VIDEO")
         cls.log_level = os.getenv("LOGGER_LEVEL", "INFO")
         cls.mask = [int(coord.strip()) for coord in os.getenv("MASK", "0, 0, 0, 0").split(",")]
-        cls.fps = int(os.getenv("FPS", 2))
+        cls.fps = int(os.getenv("FPS", 5))
         cls.min_motion_frames = int(os.getenv("MIN_MOTION_FRAMES", 2))
 
         cls.parse_arguments()

@@ -22,7 +22,7 @@ VIDEO_LENGTH_SECS=5
 DETECTION_SECONDS=3
 SECS_BETWEEN_ALERTS=8
 SENSITIVITY=4000
-FPS=24
+FPS=5
 MASK=130, 360, 683, 450
 
 ```
@@ -89,7 +89,7 @@ I've included a `find-camera.py` script which you might find useful to locate yo
 - [x] normalize parameters and virtual environment
 - [] multiple chat_id and chat_id registration using a bot command
 - [x] video rotation to save space
-- [] video_buffer to Tuple[frame, timestamp]
+- [x] video_buffer to Tuple[frame, timestamp]
 
 ## COULD HAVE
 - [] Sensitivity as bot parameter
