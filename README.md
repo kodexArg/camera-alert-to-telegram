@@ -18,10 +18,10 @@ LOGGER_LEVEL="DEBUG"
 
 # Video and detection settings
 MAX_VIDEO_FILES=20
-VIDEO_LENGTH_SECS=5
+VIDEO_LENGTH_SECS=8
 DETECTION_SECONDS=3
-SECS_BETWEEN_ALERTS=8
-SENSITIVITY=4000
+SECS_BETWEEN_ALERTS=10
+SENSITIVITY=3000
 FPS=5
 MASK=130, 360, 683, 450
 
@@ -45,10 +45,10 @@ USE_TELEGRAM: Enable or disable Telegram integration. Accepts True or False. Can
 SHOW_VIDEO: Show the video feed in a window when the script is running. Accepts True or False. Can be set as --show-video in the command line.
 LOGGER_LEVEL: Control the level of logging output. Common values are DEBUG and INFO. Can be set as --log-level in the command line.
 VIDEO_LENGTH_SECS: Duration of the video saved when motion is detected. Defaults to 5 seconds. Minimum value is 4 seconds. Can be set as --video-seconds.
-DETECTION_SECONDS: Time in seconds before considering motion as ceased. Defaults to 3 seconds. Can only be positive. Can be set as --detection-seconds.
+DETECTION_SECONDS: Time in seconds before considering motion as ceased. Defaults to 2 seconds. Can only be positive. Can be set as --detection-seconds.
 SECS_BETWEEN_ALERTS: Minimum time between two alerts. Defaults to 8 seconds. Must be greater than VIDEO_LENGTH_SECS. Can be set as --secs-between-alerts.
-SENSITIVITY: Sensitivity for motion detection. Defaults to 4000. Can be set as --sensitivity.
-FPS: Frames per second of the video. Defaults to 24. Can be set as --fps.
+SENSITIVITY: Sensitivity for motion detection. Defaults to 3000. Can be set as --sensitivity.
+FPS: Frames per second of the video. Defaults to 5. Can be set as --fps.
 MASK: Defines the area for motion detection in the format x1, y1, x2, y2. All values must be positive integers, with x1 < x2 and y1 < y2. Can be set as --mask.
 
 
