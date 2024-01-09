@@ -39,13 +39,13 @@ class Config:
         cls.rtsp = os.getenv("RTSP")
         cls.token = os.getenv("TOKEN")
         cls.chat_id = os.getenv("CHAT_ID")
-        cls.use_telegram = bool(os.getenv("USE_TELEGRAM", False))
+        cls.use_telegram = True if os.getenv("USE_TELEGRAM").lower() == "true" else False
         cls.max_video_files = int(os.getenv("MAX_VIDEO_FILES", 20))
         cls.video_length_secs = int(os.getenv("VIDEO_LENGTH_SECS", 8))
         cls.detection_seconds = int(os.getenv("DETECTION_SECONDS", 2))
         cls.secs_between_alerts = int(os.getenv("SECS_BETWEEN_ALERTS", 8))
         cls.sensitivity = int(os.getenv("SENSITIVITY", 4000))
-        cls.show_video = os.getenv("SHOW_VIDEO")
+        cls.show_video =  True if os.getenv("SHOW_VIDEO").lower() == "true" else False
         cls.log_level = os.getenv("LOGGER_LEVEL", "INFO")
         cls.mask = [int(coord.strip()) for coord in os.getenv("MASK", "0, 0, 0, 0").split(",")]
         cls.fps = int(os.getenv("FPS", 5))
@@ -367,4 +367,5 @@ Config.load()
 if __name__ == "__main__":
     logger.level(Config.log_level)
     logger.info(f"Initializing with logger level {Config.log_level}")
+    logger.debug(f"Bot: {Config.use_telegram}")
     asyncio.run(main())

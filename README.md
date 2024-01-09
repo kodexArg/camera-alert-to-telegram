@@ -87,15 +87,15 @@ I've included a `find-camera.py` script which you might find useful to locate yo
 ## TODO
 - [x] keep a permanent cache of X seconds (prolly 1 second) so the user can see the movement trigger
 - [x] normalize parameters and virtual environment
-- [] multiple chat_id and chat_id registration using a bot command
+- [ ] multiple chat_id and chat_id registration using a bot command
 - [x] video rotation to save space
 - [x] video_buffer to Tuple[frame, timestamp]
 
 ## COULD HAVE
-- [] Sensitivity as bot parameter
-- [] Send Video to Telegram as bot parameter
-- [] Send Text to Telegram option
-- [] .env variable to disable the telegram
-- [] Mask as bot parameter + draw the mask
+- [ ] Sensitivity as bot parameter
+- [ ] Send Video to Telegram as bot parameter
+- [ ] Send Text to Telegram option
+- [ ] .env variable to disable the telegram
+- [ ] Mask as bot parameter + draw the mask
 
 
