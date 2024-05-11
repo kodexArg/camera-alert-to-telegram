@@ -54,8 +54,9 @@ async def process_frames(first_video_capture):
 def initialize_processing():
     mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
     last_motion = last_alert = None
-    frame_interval = 1.0 / config.fps  # fraction of second
-    frames_in_cache = config.fps * config.video_length_secs + 2  # arbitrary 10 more frames
+    frame_interval = 1.0 / Config.fps  # fraction of second
+    frames_in_cache = Config.fps * Config.video_length_secs + 2  # arbitrary 10 more frames
+
     video_buffer = deque(maxlen=frames_in_cache)
     return mog2_subtractor, last_motion, last_alert, frame_interval, video_buffer
 
@@ -64,7 +65,8 @@ def read_frame(cap):
     ret, frame = cap.read()
     if not ret:
         return False, None, None
-    return (ret, frame, cv2.cvtcolor(frame, cv2.color_bgr2gray))
+    return (ret, frame, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+
 
 
 def draw_white_box_and_status_dots(frame, motion_detected, on_alert):
