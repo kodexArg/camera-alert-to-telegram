@@ -52,7 +52,7 @@ async def process_frames(first_video_capture):
 
 
 def initialize_processing():
-    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varthreshold=100, detectshadows=true)  # todo: un-hardcode
+    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varthreshold=100, detectshadows=True)  # todo: un-hardcode
     last_motion = last_alert = none
     frame_interval = 1.0 / config.fps  # fraction of second
     frames_in_cache = config.fps * config.video_length_secs + 2  # arbitrary 10 more frames
