@@ -13,7 +13,8 @@ from config import Config
 
 
 async def process_frames(first_video_capture):
-    bot = Bot(Config.token)  # Inicializa el bot al inicio para uso en caso de alertas
+    """Main Loop"""
+    bot = Bot(Config.token) 
     on_alert = False
     motion_detected = False
     motion_frame_count = 0
@@ -44,17 +45,17 @@ async def process_frames(first_video_capture):
             await asyncio.sleep(frame_interval)
 
         except Exception as e:
-            logger.error(f"Error processing frame: {e}")
-            await send_error_alert(bot, f"Error irrecuperable detectado: {e}. Por favor, reinicie el dispositivo.")
-            break  # Salir
+            logger.error(f"error processing frame: {e}")
+            await send_error_alert(bot, f"FAILURE. Please restart.")
+            break 
 
 
 
 def initialize_processing():
-    mog2_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)  # TODO: un-hardcode
-    last_motion = last_alert = None
-    frame_interval = 1.0 / Config.fps  # fraction of second
-    frames_in_cache = Config.fps * Config.video_length_secs + 2  # Arbitrary 10 more frames
+    mog2_subtractor = cv2.createbackgroundsubtractormog2(history=500, varthreshold=100, detectshadows=true)  # todo: un-hardcode
+    last_motion = last_alert = none
+    frame_interval = 1.0 / config.fps  # fraction of second
+    frames_in_cache = config.fps * config.video_length_secs + 2  # arbitrary 10 more frames
     video_buffer = deque(maxlen=frames_in_cache)
     return mog2_subtractor, last_motion, last_alert, frame_interval, video_buffer
 
@@ -63,11 +64,11 @@ def read_frame(cap):
     ret, frame = cap.read()
     if not ret:
         return False, None, None
-    return (ret, frame, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+    return (ret, frame, cv2.cvtcolor(frame, cv2.color_bgr2gray))
 
 
 def draw_white_box_and_status_dots(frame, motion_detected, on_alert):
-    mask_rect = Config.mask
+    mask_rect = config.mask
     cv2.rectangle(frame, (mask_rect[0], mask_rect[1]), (mask_rect[2], mask_rect[3]), (255, 255, 255), 1)
     if motion_detected:
         cv2.circle(frame, (10, 10), 5, (255, 255, 255), -1)
@@ -76,6 +77,7 @@ def draw_white_box_and_status_dots(frame, motion_detected, on_alert):
 
 
 async def handle_frame_processing(frame, gray_frame, mog2_subtractor):
+    """Returns bool with motion_detected status."""
     fg_mask = mog2_subtractor.apply(gray_frame)
     _, fg_mask = cv2.threshold(fg_mask, 250, 255, cv2.THRESH_BINARY)
 
@@ -125,8 +127,7 @@ def display_frame(frame):
 
 
 async def handle_motion_detection(motion_detected, video_buffer, last_motion, last_alert, on_alert, motion_frame_count):
-    """Note: detailed and easy to understand explanation can be found in the README.md,
-    under the title `Video Capture and Alert Logic`."""
+    """Note: detailed and easy to understand explanation can be found in the README.md"""
 
     now = datetime.now()
     motion_frame_count, is_sustained_motion = update_motion_frame_count(motion_detected, motion_frame_count)
@@ -229,37 +230,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def main():
-    cap = cv2.VideoCapture(Config.rtsp)
-
-    if Config.use_telegram:
-        logger.debug("Building Telegram Bot...")
-        bot_app = ApplicationBuilder().token(Config.token).build()
-        bot_app.add_handler(CommandHandler("start", start))
-
-        await bot_app.initialize()
-        await bot_app.start()
-        await bot_app.updater.start_polling()  # Bot loop
-        await send_bot_initialized_message()
-
-    # Main video loop
-    logger.debug("Processing frames...")
-    await process_frames(cap)
-
-    # Clean up for video processing
-    logger.debug("releasing and destroying all windows...")
-    cap.release()
-    cv2.destroyAllWindows()
-
-    if Config.use_telegram:
-        logger.debug("Stopping the bot polling...")
-        await bot_app.updater.stop()
-
-        logger.debug("Shutting down the bot...")
-        await bot_app.shutdown()
-        logger.debug("Bot gracefully shut down.")
-
-
 async def send_error_alert(bot, message):
     try:
         await bot.send_message(Config.chat_id, message)
@@ -267,7 +237,45 @@ async def send_error_alert(bot, message):
         logger.error(f"Failed to send error alert to Telegram: {e}")
 
 
+async def main():
+    while True:  
+        try:
+            cap = cv2.VideoCapture(Config.rtsp)
 
+            if Config.use_telegram:
+                logger.debug("Building Telegram Bot...")
+                bot_app = ApplicationBuilder().token(Config.token).build()
+                bot_app.add_handler(CommandHandler("start", start))
+
+                await bot_app.initialize()
+                await bot_app.start()
+                await bot_app.updater.start_polling()  # Bot loop
+                await send_bot_initialized_message()
+
+            # Main video loop
+            logger.debug("Processing frames...")
+            await process_frames(cap)
+
+            # Clean up for video processing
+            logger.debug("Releasing and destroying all windows...")
+            cap.release()
+            cv2.destroyAllWindows()
+
+            if Config.use_telegram:
+                logger.debug("Stopping the bot polling...")
+                await bot_app.updater.stop()
+
+                logger.debug("Shutting down the bot...")
+                await bot_app.shutdown()
+                logger.debug("Bot gracefully shut down.")
+
+        except Exception as e:
+            logger.error(f"Encountered an error: {e}")
+            if Config.use_telegram:
+                bot = Bot(Config.token)
+                await bot.send_message(Config.chat_id, f"An error occurred: {e}. Restarting system...")
+            logger.debug("Restarting main loop...")
+            continue  # Reinicia el loop principal tras un error
 
 Config.load()
 
