@@ -70,7 +70,7 @@ def read_frame(cap):
 
 
 def draw_white_box_and_status_dots(frame, motion_detected, on_alert):
-    mask_rect = config.mask
+    mask_rect = Config.mask
     cv2.rectangle(frame, (mask_rect[0], mask_rect[1]), (mask_rect[2], mask_rect[3]), (255, 255, 255), 1)
     if motion_detected:
         cv2.circle(frame, (10, 10), 5, (255, 255, 255), -1)
