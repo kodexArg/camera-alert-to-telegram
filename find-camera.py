@@ -1,16 +1,14 @@
-#
-credits: https://stackoverflow.com/questions/13688328/list-rtsp-streams-of-network-camera/61666478#61666478
-#
+#credits: https://stackoverflow.com/questions/13688328/list-rtsp-streams-of-network-camera/61666478#61666478
 
 import ipaddress
 import cv2
 
 # need to know those before hand. I got IP with Nmap
 usr = 'admin'
-pwd = 'admin'
-ip = '192.168.1.1'
-start_ip = '192.168.1.1'
-end_ip = '192.168.1.254'
+pwd = 'mce1810'
+ip = '172.24.205.201'
+start_ip = '172.24.205.201'
+end_ip = '172.24.205.201'
 
 # I took the url patterns and also included some variations, just to be sure...
 urls = [f'rtsp://{usr}:{pwd}@{ip}:554/cam/realmonitor?channel=1&subtype=0',
@@ -90,7 +88,7 @@ def main():
 
 if __name__ == '__main__':
     main()
-# for url in urls:
-#     if test_url(url):
-#         print(url)
+    for url in urls:
+        if test_url(url):
+            print(url)
     
