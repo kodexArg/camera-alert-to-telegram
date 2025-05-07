@@ -1,101 +1,209 @@
+# Camera Alert to Telegram
+
+A Python-based surveillance system that detects motion in a video stream and sends alerts via Telegram. The system uses OpenCV for video processing and motion detection, and the python-telegram-bot library for Telegram integration.
+
+## Features
+
+- Real-time motion detection in a configurable area of the video stream
+- Automatic video recording when motion is detected
+- Telegram integration for instant alerts and video sharing
+- Configurable sensitivity and detection parameters
+- Video buffer management with automatic cleanup
+- Command-line interface for instant photos and video clips
+- Robust error handling and logging system
+
 ## Required Environment Variables
-Some of these can be sent as arguments. Use '-h' to get information about how to use them. As soon as you get a good configuration, write it in a **.env** file. 
 
-### Example .env file:
+The system can be configured through environment variables in a `.env` file or command-line arguments. Here's an example configuration:
 
-```
+```env
 # Required
-RTSP=rtsp://your_camera_connection_string
+RTSP="rtsp://your_camera_url"
 
 # Required if USE_TELEGRAM = True
-TOKEN=your_telegram_token
-CHAT_ID=your_chat_id #TODO: or a [list, of, chats, ids]
+TOKEN="your_telegram_bot_token"
+CHAT_ID="your_chat_id"
 
 # Features
-USE_TELEGRAM=False
-SHOW_VIDEO=True
-LOGGER_LEVEL="DEBUG"
+USE_TELEGRAM=True
+SHOW_VIDEO=False
+LOGGER_LEVEL="INFO"
 
 # Video and detection settings
-MAX_VIDEO_FILES=20
-VIDEO_LENGTH_SECS=8
+MAX_VIDEO_FILES=6
+VIDEO_LENGTH_SECS=20
 DETECTION_SECONDS=3
-SECS_BETWEEN_ALERTS=10
-SENSITIVITY=3000
-FPS=5
-MASK=130, 360, 683, 450
-
+SECS_BETWEEN_ALERTS=21
+SENSITIVITY=4500
+FPS=6
+MIN_MOTION_FRAMES=3
+MASK=150, 290, 683, 523
 ```
 
-### Running app.py with arguments:
+### Configuration Parameters
+
+#### Required Parameters
+- `RTSP`: The RTSP URL for your camera stream
+- `TOKEN`: Your Telegram bot token (required if `USE_TELEGRAM=True`)
+- `CHAT_ID`: Your Telegram chat ID (required if `USE_TELEGRAM=True`)
+
+#### Optional Parameters
+- `USE_TELEGRAM`: Enable/disable Telegram integration (default: `True`)
+- `SHOW_VIDEO`: Show video feed in a window (default: `False`)
+- `LOGGER_LEVEL`: Logging level (default: `"INFO"`)
+
+#### Video and Detection Settings
+- `MAX_VIDEO_FILES`: Maximum number of video files to keep (default: `6`)
+- `VIDEO_LENGTH_SECS`: Duration of recorded videos in seconds (default: `20`)
+- `DETECTION_SECONDS`: Time to confirm motion (default: `3`)
+- `SECS_BETWEEN_ALERTS`: Minimum time between alerts (default: `21`)
+- `SENSITIVITY`: Motion detection sensitivity (default: `4500`)
+- `FPS`: Frames per second (default: `6`)
+- `MIN_MOTION_FRAMES`: Minimum frames with motion to trigger alert (default: `3`)
+- `MASK`: Detection area coordinates (x1, y1, x2, y2)
+
+## Running the Application
+
+### Basic Usage
+```bash
+python app.py
 ```
-./app.py --rtsp rtsp://your_camera_url --log-level DEBUG --mask 130 360 683 450
 
+### Command-line Arguments
+```bash
+python app.py --rtsp rtsp://your_camera_url --log-level INFO --mask 150 290 683 523
 ```
 
-### About these values:
-RTSP: The RTSP URL for your camera. This is essential for accessing the video stream.
-TOKEN: Your Telegram bot token. Required if you enable Telegram notifications.
-CHAT_ID: Your Telegram chat ID (or a list of IDs) for receiving notifications. Required if Telegram notifications are enabled.
+## Telegram Bot Commands
 
-**Optional Parameters**
-*These parameters can be set in the .env file or passed as command-line arguments when running app.py.*
+The system provides several commands for interacting with the surveillance system:
 
-USE_TELEGRAM: Enable or disable Telegram integration. Accepts True or False. Can be set as --use-telegram in the command line.
-SHOW_VIDEO: Show the video feed in a window when the script is running. Accepts True or False. Can be set as --show-video in the command line.
-LOGGER_LEVEL: Control the level of logging output. Common values are DEBUG and INFO. Can be set as --log-level in the command line.
-VIDEO_LENGTH_SECS: Duration of the video saved when motion is detected. Defaults to 5 seconds. Minimum value is 4 seconds. Can be set as --video-seconds.
-DETECTION_SECONDS: Time in seconds before considering motion as ceased. Defaults to 2 seconds. Can only be positive. Can be set as --detection-seconds.
-SECS_BETWEEN_ALERTS: Minimum time between two alerts. Defaults to 8 seconds. Must be greater than VIDEO_LENGTH_SECS. Can be set as --secs-between-alerts.
-SENSITIVITY: Sensitivity for motion detection. Defaults to 3000. Can be set as --sensitivity.
-FPS: Frames per second of the video. Defaults to 5. Can be set as --fps.
-MASK: Defines the area for motion detection in the format x1, y1, x2, y2. All values must be positive integers, with x1 < x2 and y1 < y2. Can be set as --mask.
+- `/start`: Display welcome message and available commands
+- `/photo`: Take and send an instant photo from the camera
+- `/clip5`: Generate and send a 5-second video clip
+- `/clip20`: Generate and send a 20-second video clip
 
+## Video Processing and Alert Logic
 
-## Video Capture and Alert Logic 
+The system uses a sophisticated buffer-based approach to ensure comprehensive motion capture:
 
-The logic behind video capture and alert triggering is designed to ensure that significant motion events are captured effectively. To understand this, let's consider a scenario with specific parameter values:
+1. **Continuous Buffer**
+   - Maintains a circular buffer of video frames
+   - Buffer size = `VIDEO_LENGTH_SECS + SECS_BETWEEN_ALERTS + 5` seconds
+   - Each frame is timestamped for precise event tracking
 
-- `VIDEO_LENGTH_SECS`: 6 seconds (the total length of the video to be saved)
-- `DETECTION_SECONDS`: 2 seconds (the time required to confirm actual motion)
-- An additional 1-second pre-motion buffer is used for context (an arbitrary constant for better user understanding)
+2. **Motion Detection**
+   - Uses OpenCV's MOG2 background subtractor
+   - Processes frames at configured `FPS`
+   - Detects motion in the specified `MASK` area
+   - Requires `MIN_MOTION_FRAMES` consecutive frames with motion
 
-**How the Logic Works:**
-1. **Motion Detection and Alert Triggering**:
-   - When motion is detected, the system starts a countdown of `DETECTION_SECONDS` (2 seconds in our example).
-   - If sustained motion is confirmed after these 2 seconds, an alert is triggered.
+3. **Alert Triggering**
+   - When motion is detected, waits `DETECTION_SECONDS` to confirm
+   - Ensures `SECS_BETWEEN_ALERTS` between consecutive alerts
+   - Saves video from buffer when alert is triggered
+   - Automatically manages video file storage
 
-2. **Video Capture Process**:
-   - Normally, one would expect the video capture to start immediately after the alert is triggered. However, this approach would miss the initial 2 seconds of motion that led to the alert.
-   - To capture these crucial initial moments, the system utilizes a 6-second buffer (`video_buffer`) which continuously records video.
-   - Upon triggering an alert, instead of immediately saving the video, the system waits for an additional 4 seconds (6 seconds total length - 2 seconds motion detection period). This ensures that the video buffer contains the initial 2 seconds of motion.
+4. **Video Management**
+   - Saves videos in MP4 format
+   - Maintains maximum of `MAX_VIDEO_FILES` videos
+   - Automatically removes oldest videos when limit is reached
+   - Videos are named with timestamp and duration
 
-3. **Enhanced Contextual Capture**:
-   - To provide an even better context, we subtract another second from the capture period. This means that the system will now wait for only 3 seconds post-alert before saving the video.
-   - This adjustment ensures that the final video starts with 1 second of 'no motion' footage, followed by the 2 seconds of initial motion and then 3 seconds after the motion, totaling 6 seconds. 
+## Error Handling and Logging
 
-**Example Breakdown of the Final Video**:
-- The first 1 second shows the scene before the motion started, providing context.
-- The next 2 seconds capture the initial motion that triggered the alert.
-- The final 3 seconds show the continued motion post-alert, completing the story.
+- Comprehensive error handling for video capture and processing
+- Automatic reconnection attempts for lost video streams
+- Detailed logging with configurable levels
+- Telegram notifications for critical errors
+- Clean shutdown handling for system signals
 
+## Development Status
 
-## Extras
-I've included a `find-camera.py` script which you might find useful to locate your camera on the LAN.
+### Completed Features
+- [x] Configurable video buffer with timestamp tracking
+- [x] Normalized parameters and virtual environment
+- [x] Video rotation and cleanup
+- [x] Robust error handling and logging
+- [x] Telegram integration with multiple commands
 
+### Planned Features
+- [ ] Multiple chat_id support and registration via bot commands
+- [ ] Configurable sensitivity through bot commands
+- [ ] Optional text-only alerts
+- [ ] Dynamic mask configuration through bot commands
+- [ ] Mask visualization in video feed
 
-## TODO
-- [x] keep a permanent cache of X seconds (prolly 1 second) so the user can see the movement trigger
-- [x] normalize parameters and virtual environment
-- [ ] multiple chat_id and chat_id registration using a bot command
-- [x] video rotation to save space
-- [x] video_buffer to Tuple[frame, timestamp]
+## Dependencies
 
-## COULD HAVE
-- [ ] Sensitivity as bot parameter
-- [ ] Send Video to Telegram as bot parameter
-- [ ] Send Text to Telegram option
-- [ ] .env variable to disable the telegram
-- [ ] Mask as bot parameter + draw the mask
+- Python 3.11+
+- OpenCV
+- python-telegram-bot
+- loguru
+- python-dotenv
+
+## Installation
+
+### Standard Installation
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file with your configuration
+4. Run the application:
+   ```bash
+   python app.py
+   ```
+
+### Raspberry Pi Installation
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+3. Create a `.env` file with your configuration
+4. Run the application:
+   ```bash
+   python3 app.py
+   ```
+
+### Running as a Service (Linux)
+For production environments, it's recommended to run the application as a systemd service. This ensures:
+- Automatic startup on boot
+- Automatic restart on failure
+- Proper logging and monitoring
+- System resource management
+
+Create a service file at `/etc/systemd/system/camera-alert.service` with appropriate permissions and configuration. The service should run as a non-root user with necessary permissions for camera access.
+
+Example service configuration:
+```ini
+[Unit]
+Description=Camera Alert to Telegram Service
+After=network.target
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/path/to/camera-alert-to-telegram
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+```bash
+sudo systemctl enable camera-alert
+sudo systemctl start camera-alert
+```
+
+Monitor the service:
+```bash
+sudo systemctl status camera-alert
+```
 
 
