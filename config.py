@@ -21,6 +21,10 @@ class Config:
     fps = 5
     min_motion_frames = 2
     slow_motion = 0.75
+    motion_picture = True
+    motion_picture_cooldown_secs = 5
+    video_directory = "./videos"
+    motion_pictures_directory = "./motion_pictures"
 
     @classmethod
     def load(cls):
@@ -68,6 +72,10 @@ class Config:
         parser.add_argument("--fps", type=int, default=cls.fps, help="Frames per Second")
         parser.add_argument("--min-motion-frames", type=int, default=cls.min_motion_frames, help="How many motion detection should occur before considering it a motion")
         parser.add_argument("--slow-motion", type=float, default=cls.slow_motion, help="Slow motion factor (e.g., 0.75 for 75% speed, 1.0 for normal speed)")
+        parser.add_argument("--motion-picture", action="store_true", default=cls.motion_picture, help="Enable motion picture mode")
+        parser.add_argument("--motion-picture-cooldown-secs", type=int, default=cls.motion_picture_cooldown_secs, help="Cooldown time in seconds between motion picture alerts")
+        parser.add_argument("--video-directory", type=str, default=cls.video_directory, help="Directory to store recorded videos")
+        parser.add_argument("--motion-pictures-directory", type=str, default=cls.motion_pictures_directory, help="Directory to store motion pictures")
 
         args = parser.parse_args()
 
@@ -85,6 +93,10 @@ class Config:
         cls.fps = args.fps
         cls.min_motion_frames = args.min_motion_frames
         cls.slow_motion = args.slow_motion
+        cls.motion_picture = args.motion_picture
+        cls.motion_picture_cooldown_secs = args.motion_picture_cooldown_secs
+        cls.video_directory = args.video_directory
+        cls.motion_pictures_directory = args.motion_pictures_directory
 
         cls.video_length_secs = max(cls.video_length_secs, 4)
         cls.detection_seconds = max(cls.detection_seconds, 0)

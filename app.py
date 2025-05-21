@@ -15,11 +15,8 @@ import signal
 from config import Config
 
 
-VIDEO_DIRECTORY = "./videos"
-
-
 def ensure_directories_exist():
-    directories = [VIDEO_DIRECTORY]
+    directories = [Config.video_directory, Config.motion_pictures_directory]
     
     for directory in directories:
         try:
@@ -38,9 +35,9 @@ def ensure_directories_exist():
 
 def initialize_processing():
     background_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
-    last_motion = last_alert = first_motion_time = None
+    last_motion = last_alert = first_motion_time = last_motion_picture_time = None
     frame_interval = 1.0 / Config.fps
-    return background_subtractor, last_motion, last_alert, first_motion_time, frame_interval
+    return background_subtractor, last_motion, last_alert, first_motion_time, last_motion_picture_time, frame_interval
 
 
 def read_frame(video_capture):
@@ -83,8 +80,8 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motio
     out = None
     
     try:
-        if not os.path.exists(VIDEO_DIRECTORY):
-            os.makedirs(VIDEO_DIRECTORY)
+        if not os.path.exists(Config.video_directory):
+            os.makedirs(Config.video_directory)
         
         if not video_buffer:
             logger.error("Video buffer is empty. Cannot save video.")
@@ -97,7 +94,7 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motio
             return None
         
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{VIDEO_DIRECTORY}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
+        filename = f"{Config.video_directory}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
         output_fps = max(1, Config.fps * Config.slow_motion) if Config.slow_motion > 0 else Config.fps
         
         codecs_to_try = ["mp4v", "avc1", "H264", "XVID"]
@@ -158,7 +155,7 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motio
         logger.info(f"Saved video with {frames_written} frames.")
         
         try:
-            existing_videos = glob.glob(f"{VIDEO_DIRECTORY}/*.mp4")
+            existing_videos = glob.glob(f"{Config.video_directory}/*.mp4")
             existing_videos.sort(key=os.path.getctime)
             while len(existing_videos) > Config.max_video_files:
                 old_file = existing_videos.pop(0)
@@ -260,7 +257,8 @@ async def process_frame(frame, gray_frame, background_subtractor):
 
 
 async def handle_motion_detection(
-    motion_detected, video_buffer, last_motion, last_alert, on_alert, motion_frame_count, bot, first_motion_time=None
+    motion_detected, current_frame, video_buffer, last_motion, last_alert, on_alert, 
+    motion_frame_count, bot, last_motion_picture_time=None, first_motion_time=None
 ):
     now = datetime.now()
     motion_frame_count, is_sustained_motion = update_motion_frame_count(
@@ -270,6 +268,20 @@ async def handle_motion_detection(
     if motion_detected and not last_motion:
         first_motion_time = now
         logger.debug(f"First motion detected at {first_motion_time.strftime('%H:%M:%S')}")
+        
+        # Handle motion picture if enabled and cooldown period passed
+        if Config.motion_picture and Config.use_telegram:
+            can_send_picture = last_motion_picture_time is None or (now - last_motion_picture_time) > timedelta(seconds=Config.motion_picture_cooldown_secs)
+            
+            if can_send_picture:
+                logger.info(f"Motion detected. Sending picture...")
+                last_motion_picture_time = now
+                
+                # Save motion picture
+                picture_path = save_motion_picture(current_frame)
+                
+                # Send motion picture to Telegram
+                await send_motion_picture_to_telegram(current_frame, bot)
     
     if on_alert:
         half_duration = Config.video_length_secs / 2
@@ -285,6 +297,8 @@ async def handle_motion_detection(
             
             if saved_video_path:
                 await send_video_to_telegram(saved_video_path, bot)
+                # Clean up motion pictures after sending video
+                cleanup_motion_pictures()
             else:
                 logger.error("Failed to save alert video.")
             
@@ -307,14 +321,14 @@ async def handle_motion_detection(
     elif last_motion and (now - last_motion) > timedelta(seconds=2):
         last_motion = None
     
-    return last_motion, last_alert, on_alert, motion_frame_count, first_motion_time
+    return last_motion, last_alert, on_alert, motion_frame_count, last_motion_picture_time, first_motion_time
 
 
 async def process_frames(video_capture, video_buffer, bot):
     on_alert = False
     current_frame_motion_detected = False
     motion_frame_count = 0
-    background_subtractor, last_motion, last_alert, first_motion_time, frame_interval = initialize_processing()
+    background_subtractor, last_motion, last_alert, first_motion_time, last_motion_picture_time, frame_interval = initialize_processing()
     
     while True:
         try:
@@ -331,14 +345,16 @@ async def process_frames(video_capture, video_buffer, bot):
                 frame, gray_frame, background_subtractor
             )
             
-            last_motion, last_alert, on_alert, motion_frame_count, first_motion_time = await handle_motion_detection(
+            last_motion, last_alert, on_alert, motion_frame_count, last_motion_picture_time, first_motion_time = await handle_motion_detection(
                 current_frame_motion_detected,
+                frame,
                 video_buffer,
                 last_motion,
                 last_alert,
                 on_alert,
                 motion_frame_count,
                 bot,
+                last_motion_picture_time,
                 first_motion_time
             )
             
@@ -450,6 +466,64 @@ async def handle_clip5_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def handle_clip20_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_requested_clip(update, context, duration_seconds=20)
+
+
+async def send_motion_picture_to_telegram(frame, bot: Bot):
+    if not Config.use_telegram or not Config.motion_picture:
+        return
+    
+    try:
+        success, image_buffer = cv2.imencode(".jpg", frame)
+        
+        if not success:
+            logger.error("Failed to encode motion image to JPG")
+            return
+        
+        image_file = BytesIO(image_buffer)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"motion_{timestamp_str}.jpg"
+        image_file.name = filename
+        
+        await bot.send_photo(
+            chat_id=Config.chat_id,
+            photo=InputFile(image_file, filename=filename),
+            caption="🚨 Motion detected!"
+        )
+        logger.info(f"Motion picture sent to Telegram")
+    except Exception as e:
+        logger.error(f"Failed to send motion picture to Telegram: {e}")
+
+
+def save_motion_picture(frame):
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{Config.motion_pictures_directory}/motion_{timestamp_str}.jpg"
+    
+    try:
+        if not os.path.exists(Config.motion_pictures_directory):
+            os.makedirs(Config.motion_pictures_directory, exist_ok=True)
+        
+        cv2.imwrite(filename, frame)
+        logger.debug(f"Saved motion picture: {filename}")
+        return filename
+    except Exception as e:
+        logger.error(f"Error saving motion picture: {e}")
+        return None
+
+
+def cleanup_motion_pictures():
+    try:
+        if not os.path.exists(Config.motion_pictures_directory):
+            return
+        
+        motion_pictures = glob.glob(f"{Config.motion_pictures_directory}/*.jpg")
+        for picture in motion_pictures:
+            try:
+                os.remove(picture)
+                logger.debug(f"Deleted motion picture: {picture}")
+            except OSError as e:
+                logger.error(f"Could not delete motion picture {picture}: {e}")
+    except Exception as e:
+        logger.error(f"Error cleaning up motion pictures: {e}")
 
 
 async def main():
