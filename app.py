@@ -510,26 +510,36 @@ async def signal_handler(sig, frame):
 
 if __name__ == "__main__":
     try:
-        Config.load()
         logger.remove()
-        log_level = Config.log_level.upper()
         
-        # Asegurar que la carpeta logs exista
-        if not os.path.exists("logs"):
-            os.makedirs("logs")
-            
-        logger.add(lambda msg: print(msg, end=""), level=log_level, format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
-        logger.add("logs/app_{time:YYYY-MM-DD}.log", rotation="1 day", retention="7 days", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(script_dir, "logs")
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
+        
+        logger.add(lambda msg: print(msg, end=""), level="INFO", format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
+        logger.add(os.path.join(logs_dir, "app_{time:YYYY-MM-DD}.log"), rotation="1 day", retention="7 days", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}")
+        
         logger.info("--- Script Start ---")
-        logger.info(f"Log level configured: {log_level}")
+        
+        try:
+            Config.load()
+            log_level = Config.log_level.upper()
+            for handler_id in logger._core.handlers:
+                logger.configure(handlers=[{"sink": logger._core.handlers[handler_id]._sink, "level": log_level}])
+            logger.info(f"Log level configured: {log_level}")
+        except Exception as config_error:
+            logger.critical(f"Configuration error: {config_error}")
+            raise
+            
         logger.info(f"Use Telegram: {Config.use_telegram}")
         logger.info(f"Show Video: {Config.show_video}")
 
         asyncio.run(main())
 
     except FileNotFoundError:
-         print("CRITICAL ERROR: .env or config.py file not found.")
-         logger.critical("File .env or config.py not found.")
+        print("CRITICAL ERROR: .env or config.py file not found.")
+        logger.critical("File .env or config.py not found.")
     except ValueError as ve:
         print(f"CRITICAL ERROR in configuration: {ve}")
         logger.critical(f"Configuration error: {ve}")
