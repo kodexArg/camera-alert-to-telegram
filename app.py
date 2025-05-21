@@ -18,6 +18,24 @@ from config import Config
 VIDEO_DIRECTORY = "./videos"
 
 
+def ensure_directories_exist():
+    directories = [VIDEO_DIRECTORY]
+    
+    for directory in directories:
+        try:
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+                logger.info(f"Created directory: {directory}")
+            
+            test_file = os.path.join(directory, ".permissions_test")
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+        except Exception as e:
+            logger.critical(f"Cannot create or write to directory {directory}: {e}")
+            raise
+
+
 def initialize_processing():
     background_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
     last_motion = last_alert = first_motion_time = None
@@ -62,83 +80,108 @@ def draw_motion_rectangles(frame, bounding_boxes):
 
 def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motion_time=None):
     save_duration = duration_seconds if duration_seconds is not None else Config.video_length_secs
-    
-    if not os.path.exists(VIDEO_DIRECTORY):
-        os.makedirs(VIDEO_DIRECTORY)
-    
-    if not video_buffer:
-        logger.error("Video buffer is empty. Cannot save video.")
-        return None
+    out = None
     
     try:
-        height, width, _ = video_buffer[-1][1].shape
-    except IndexError:
-        logger.error("Error accessing last frame from buffer (unexpectedly empty?).")
-        return None
-    
-    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{VIDEO_DIRECTORY}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
-    output_fps = max(1, Config.fps * Config.slow_motion) if Config.slow_motion > 0 else Config.fps
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(filename, fourcc, output_fps, (width, height))
-    
-    buffer_copy = list(video_buffer)
-    if not buffer_copy:
-        logger.error("Buffer became empty during video creation.")
-        out.release()
-        return None
-    
-    if first_motion_time and prefix == "motion":
-        half_duration = save_duration / 2
-        save_start_time = first_motion_time - timedelta(seconds=half_duration)
-        save_end_time = first_motion_time + timedelta(seconds=half_duration)
-        logger.info(f"Video centered on motion at {first_motion_time.strftime('%H:%M:%S')}")
-    else:
-        save_start_time = datetime.now() - timedelta(seconds=save_duration)
-        save_end_time = datetime.now()
-    
-    frames_written = 0
-    earliest_frame_time = buffer_copy[0][0] if buffer_copy else None
-    latest_frame_time = buffer_copy[-1][0] if buffer_copy else None
-    
-    if earliest_frame_time and latest_frame_time:
-        buffer_span = (latest_frame_time - earliest_frame_time).total_seconds()
-        logger.debug(f"Buffer spans {buffer_span:.1f}s: {earliest_frame_time.strftime('%H:%M:%S')} - {latest_frame_time.strftime('%H:%M:%S')}")
-    
-    if earliest_frame_time and save_start_time < earliest_frame_time:
-        logger.warning(f"Requested frame time {save_start_time.strftime('%H:%M:%S')} earlier than buffer start {earliest_frame_time.strftime('%H:%M:%S')}")
-    
-    for timestamp, frame in buffer_copy:
-        if save_start_time <= timestamp <= save_end_time:
-            out.write(frame)
-            frames_written += 1
-    
-    out.release()
-    
-    if frames_written == 0:
-        logger.warning(f"No frames written for {filename}.")
+        if not os.path.exists(VIDEO_DIRECTORY):
+            os.makedirs(VIDEO_DIRECTORY)
+        
+        if not video_buffer:
+            logger.error("Video buffer is empty. Cannot save video.")
+            return None
+        
         try:
-            os.remove(filename)
-        except OSError:
-            pass
+            height, width, _ = video_buffer[-1][1].shape
+        except IndexError:
+            logger.error("Error accessing last frame from buffer (unexpectedly empty?).")
+            return None
+        
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{VIDEO_DIRECTORY}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
+        output_fps = max(1, Config.fps * Config.slow_motion) if Config.slow_motion > 0 else Config.fps
+        
+        codecs_to_try = ["mp4v", "avc1", "H264", "XVID"]
+        out = None
+        
+        for codec in codecs_to_try:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                test_out = cv2.VideoWriter(filename, fourcc, output_fps, (width, height))
+                
+                if test_out.isOpened():
+                    out = test_out
+                    logger.debug(f"Using codec: {codec}")
+                    break
+                else:
+                    test_out.release()
+            except Exception as codec_error:
+                logger.debug(f"Codec {codec} failed: {codec_error}")
+        
+        if out is None:
+            logger.error("Could not find a suitable codec for video encoding.")
+            return None
+        
+        buffer_copy = list(video_buffer)
+        if not buffer_copy:
+            logger.error("Buffer became empty during video creation.")
+            return None
+        
+        if first_motion_time and prefix == "motion":
+            half_duration = save_duration / 2
+            save_start_time = first_motion_time - timedelta(seconds=half_duration)
+            save_end_time = first_motion_time + timedelta(seconds=half_duration)
+            logger.info(f"Video centered on motion at {first_motion_time.strftime('%H:%M:%S')}")
+        else:
+            save_start_time = datetime.now() - timedelta(seconds=save_duration)
+            save_end_time = datetime.now()
+        
+        frames_written = 0
+        earliest_frame_time = buffer_copy[0][0] if buffer_copy else None
+        latest_frame_time = buffer_copy[-1][0] if buffer_copy else None
+        
+        if earliest_frame_time and latest_frame_time:
+            buffer_span = (latest_frame_time - earliest_frame_time).total_seconds()
+            logger.debug(f"Buffer spans {buffer_span:.1f}s: {earliest_frame_time.strftime('%H:%M:%S')} - {latest_frame_time.strftime('%H:%M:%S')}")
+        
+        if earliest_frame_time and save_start_time < earliest_frame_time:
+            logger.warning(f"Requested frame time {save_start_time.strftime('%H:%M:%S')} earlier than buffer start {earliest_frame_time.strftime('%H:%M:%S')}")
+        
+        for timestamp, frame in buffer_copy:
+            if save_start_time <= timestamp <= save_end_time:
+                out.write(frame)
+                frames_written += 1
+        
+        if frames_written == 0:
+            logger.warning(f"No frames written for {filename}.")
+            return None
+        
+        logger.info(f"Saved video with {frames_written} frames.")
+        
+        try:
+            existing_videos = glob.glob(f"{VIDEO_DIRECTORY}/*.mp4")
+            existing_videos.sort(key=os.path.getctime)
+            while len(existing_videos) > Config.max_video_files:
+                old_file = existing_videos.pop(0)
+                logger.info(f"Video limit ({Config.max_video_files}) reached. Deleting: {old_file}")
+                try:
+                    os.remove(old_file)
+                except OSError as e:
+                    logger.error(f"Could not delete old video {old_file}: {e}")
+        except Exception as e:
+            logger.error(f"Error managing old video files: {e}")
+        
+        return filename
+    
+    except Exception as e:
+        logger.error(f"Error in save_video: {e}", exc_info=True)
         return None
     
-    logger.info(f"Saved video with {frames_written} frames.")
-    
-    try:
-        existing_videos = glob.glob(f"{VIDEO_DIRECTORY}/*.mp4")
-        existing_videos.sort(key=os.path.getctime)
-        while len(existing_videos) > Config.max_video_files:
-            old_file = existing_videos.pop(0)
-            logger.info(f"Video limit ({Config.max_video_files}) reached. Deleting: {old_file}")
+    finally:
+        if out is not None:
             try:
-                os.remove(old_file)
-            except OSError as e:
-                logger.error(f"Could not delete old video {old_file}: {e}")
-    except Exception as e:
-        logger.error(f"Error managing old video files: {e}")
-    
-    return filename
+                out.release()
+            except Exception as e:
+                logger.error(f"Error releasing VideoWriter: {e}")
 
 
 async def send_video_to_telegram(video_path: str, bot: Bot):
@@ -550,6 +593,12 @@ if __name__ == "__main__":
         
         logger.info(f"Use Telegram: {Config.use_telegram}")
         logger.info(f"Show Video: {Config.show_video}")
+        
+        ensure_directories_exist()
+        
+        for sig in [signal.SIGINT, signal.SIGTERM]:
+            loop = asyncio.get_event_loop()
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(signal_handler(s, None)))
         
         asyncio.run(main())
         

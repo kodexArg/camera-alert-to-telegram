@@ -9,7 +9,7 @@ class Config:
     token = None
     chat_id = None
 
-    use_telegram = False
+    use_telegram = True
     max_video_files = 20
     video_length_secs = 8
     detection_seconds = 2
