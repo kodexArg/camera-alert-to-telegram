@@ -4,3 +4,4 @@ notes/
 *.mp4
 notes/
 *.log
+__pycache__/

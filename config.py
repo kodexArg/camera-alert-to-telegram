@@ -16,7 +16,7 @@ class Config:
     sensitivity = 4000
     show_video = False
     log_level = "DEBUG"
-    mask = [0, 0, 0, 0]
+    mask = [0, 0, 640, 480]
     fps = 5
     min_motion_frames = 2
     slow_motion = 1.0
