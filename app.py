@@ -76,8 +76,10 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motio
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{VIDEO_DIRECTORY}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
 
+    output_fps = max(1, Config.fps * Config.slow_motion) 
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(filename, fourcc, Config.fps, (width, height))
+    out = cv2.VideoWriter(filename, fourcc, output_fps, (width, height))
 
     buffer_copy = list(video_buffer)
     if not buffer_copy:
@@ -378,9 +380,10 @@ async def send_requested_clip(update: Update, context: ContextTypes.DEFAULT_TYPE
         if video_path and os.path.exists(video_path):
             with open(video_path, "rb") as video_file:
                 height, width, _ = video_buffer[-1][1].shape
+                actual_playback_duration = duration_seconds / Config.slow_motion if Config.slow_motion > 0 else duration_seconds
                 await update.message.reply_video(
                     video=InputFile(video_file, filename=os.path.basename(video_path)),
-                    duration=duration_seconds,
+                    duration=int(round(actual_playback_duration)),
                     width=width,
                     height=height
                 )

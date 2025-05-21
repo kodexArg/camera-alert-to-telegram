@@ -19,6 +19,7 @@ class Config:
     mask = None
     fps = None
     min_motion_frames = None
+    slow_motion = None
 
     @classmethod
     def load(cls):
@@ -39,6 +40,9 @@ class Config:
         cls.mask = [int(coord.strip()) for coord in os.getenv("MASK", "0, 0, 0, 0").split(",")]
         cls.fps = int(os.getenv("FPS", 5))
         cls.min_motion_frames = int(os.getenv("MIN_MOTION_FRAMES", 2))
+        cls.slow_motion = float(os.getenv("SLOW_MOTION", 1.0))
+        if cls.slow_motion <= 0:
+            raise ValueError("SLOW_MOTION must be a positive value.")
 
         cls.parse_arguments()
         cls.validate_mask(cls)
@@ -63,6 +67,7 @@ class Config:
         parser.add_argument("--mask", nargs=4, type=int, help="Mask coordinates (x1 y1 x2 y2)")
         parser.add_argument("--fps", type=int, default=cls.fps, help="Frames per Second")
         parser.add_argument("--min-motion-frames", type=int, default=cls.min_motion_frames, help="How many motion detection should occur before considering it a motion")
+        parser.add_argument("--slow-motion", type=float, default=cls.slow_motion, help="Slow motion factor (e.g., 0.75 for 75% speed, 1.0 for normal speed)")
 
         args = parser.parse_args()
 
