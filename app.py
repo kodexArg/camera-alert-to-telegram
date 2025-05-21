@@ -18,9 +18,9 @@ VIDEO_DIRECTORY = "./videos"
 def initialize_processing():
     """Initialize background subtractor and temporal variables."""
     background_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=100, detectShadows=True)
-    last_motion = last_alert = None
+    last_motion = last_alert = first_motion_time = None
     frame_interval = 1.0 / Config.fps
-    return background_subtractor, last_motion, last_alert, frame_interval
+    return background_subtractor, last_motion, last_alert, first_motion_time, frame_interval
 
 def read_frame(video_capture):
     """Read and convert a frame from the video stream."""
@@ -57,10 +57,9 @@ def draw_motion_rectangles(frame, bounding_boxes):
             2,
         )
 
-def save_video(video_buffer, duration_seconds=None, prefix="motion"):
-    """Save video from buffer to disk and manage old files."""
+def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motion_time=None):
     save_duration = duration_seconds if duration_seconds is not None else Config.video_length_secs
-
+    
     if not os.path.exists(VIDEO_DIRECTORY):
         os.makedirs(VIDEO_DIRECTORY)
 
@@ -80,12 +79,37 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion"):
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(filename, fourcc, Config.fps, (width, height))
 
-    save_start_time = datetime.now() - timedelta(seconds=save_duration)
-    frames_written = 0
     buffer_copy = list(video_buffer)
-
+    if not buffer_copy:
+        logger.error("Buffer became empty during video creation.")
+        out.release()
+        return None
+        
+    if first_motion_time and prefix == "motion":
+        half_duration = save_duration / 2
+        save_start_time = first_motion_time - timedelta(seconds=half_duration)
+        save_end_time = first_motion_time + timedelta(seconds=half_duration)
+        logger.info(f"Video centered on motion at {first_motion_time.strftime('%H:%M:%S')}")
+    else:
+        save_start_time = datetime.now() - timedelta(seconds=save_duration)
+        save_end_time = datetime.now()
+    
+    frames_written = 0
+    earliest_frame_time = buffer_copy[0][0] if buffer_copy else None
+    latest_frame_time = buffer_copy[-1][0] if buffer_copy else None
+    
+    # Log buffer time range for debugging
+    if earliest_frame_time and latest_frame_time:
+        buffer_span = (latest_frame_time - earliest_frame_time).total_seconds()
+        logger.debug(f"Buffer spans {buffer_span:.1f}s: {earliest_frame_time.strftime('%H:%M:%S')} - {latest_frame_time.strftime('%H:%M:%S')}")
+    
+    # Check if we have enough frames in the buffer
+    if earliest_frame_time and save_start_time < earliest_frame_time:
+        logger.warning(f"Requested frame time {save_start_time.strftime('%H:%M:%S')} earlier than buffer start {earliest_frame_time.strftime('%H:%M:%S')}")
+        
+    # Write frames within our target time range
     for timestamp, frame in buffer_copy:
-        if timestamp >= save_start_time:
+        if save_start_time <= timestamp <= save_end_time:
             out.write(frame)
             frames_written += 1
 
@@ -98,7 +122,10 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion"):
         except OSError:
             pass
         return None
+        
+    logger.info(f"Saved video with {frames_written} frames.")
 
+    # Manage old video files
     try:
         existing_videos = glob.glob(f"{VIDEO_DIRECTORY}/*.mp4")
         existing_videos.sort(key=os.path.getctime)
@@ -184,7 +211,7 @@ async def process_frame(frame, gray_frame, background_subtractor):
     return False
 
 async def handle_motion_detection(
-    motion_detected, video_buffer, last_motion, last_alert, on_alert, motion_frame_count, bot
+    motion_detected, video_buffer, last_motion, last_alert, on_alert, motion_frame_count, bot, first_motion_time=None
 ):
     """Handle alert state based on motion detection."""
     now = datetime.now()
@@ -192,12 +219,26 @@ async def handle_motion_detection(
         motion_detected, motion_frame_count
     )
 
-    if on_alert:
-        time_since_alert_start = now - last_alert
-        final_video_duration = timedelta(seconds=Config.video_length_secs)
+    # Track the time of first motion in a sequence
+    if motion_detected and not last_motion:
+        # This is the first frame with motion after a period without motion
+        first_motion_time = now
+        logger.debug(f"First motion detected at {first_motion_time.strftime('%H:%M:%S')}")
 
-        if time_since_alert_start >= final_video_duration:
-            saved_video_path = save_video(video_buffer, Config.video_length_secs, prefix="motion")
+    if on_alert:
+        # Since we want the video to be centered on the motion time, 
+        # we need to wait for half the video duration after the detection
+        half_duration = Config.video_length_secs / 2
+        time_since_first_motion = now - first_motion_time if first_motion_time else timedelta(seconds=0)
+        
+        # Wait until we have enough footage after the motion detection
+        if time_since_first_motion >= timedelta(seconds=half_duration):
+            saved_video_path = save_video(
+                video_buffer, 
+                Config.video_length_secs, 
+                prefix="motion",
+                first_motion_time=first_motion_time
+            )
             if saved_video_path:
                 await send_video_to_telegram(saved_video_path, bot)
             else:
@@ -205,6 +246,7 @@ async def handle_motion_detection(
             on_alert = False
             motion_frame_count = 0
             last_alert = now
+            first_motion_time = None  # Reset for next motion sequence
 
     if is_sustained_motion and not on_alert:
         min_time_between_alerts = timedelta(seconds=Config.secs_between_alerts)
@@ -217,15 +259,18 @@ async def handle_motion_detection(
 
     if motion_detected:
         last_motion = now
+    elif last_motion and (now - last_motion) > timedelta(seconds=2):
+        # Reset last_motion if no motion for 2 seconds
+        last_motion = None
 
-    return last_motion, last_alert, on_alert, motion_frame_count
+    return last_motion, last_alert, on_alert, motion_frame_count, first_motion_time
 
 async def process_frames(video_capture, video_buffer, bot):
     """Process frames from video stream."""
     on_alert = False
     current_frame_motion_detected = False
     motion_frame_count = 0
-    background_subtractor, last_motion, last_alert, frame_interval = initialize_processing()
+    background_subtractor, last_motion, last_alert, first_motion_time, frame_interval = initialize_processing()
 
     while True:
         try:
@@ -241,14 +286,15 @@ async def process_frames(video_capture, video_buffer, bot):
                 frame, gray_frame, background_subtractor
             )
 
-            last_motion, last_alert, on_alert, motion_frame_count = await handle_motion_detection(
+            last_motion, last_alert, on_alert, motion_frame_count, first_motion_time = await handle_motion_detection(
                 current_frame_motion_detected,
                 video_buffer,
                 last_motion,
                 last_alert,
                 on_alert,
                 motion_frame_count,
-                bot
+                bot,
+                first_motion_time
             )
 
             if Config.show_video:
@@ -299,8 +345,7 @@ async def handle_photo_command(update: Update, context: ContextTypes.DEFAULT_TYP
         image_file.name = filename
 
         await update.message.reply_photo(
-            photo=InputFile(image_file, filename=filename),
-            caption=f"📸 Photo ({timestamp.strftime('%H:%M:%S')})"
+            photo=InputFile(image_file, filename=filename)
         )
 
     except IndexError:
@@ -363,6 +408,7 @@ async def main():
     """Initialize and run bot and video processing."""
     global app_bot
 
+    # Calculate the total buffer duration in seconds, including video length, time between alerts, and an additional 5-second margin.
     buffer_seconds = Config.video_length_secs + Config.secs_between_alerts + 5
     buffer_size = int(Config.fps * buffer_seconds)
     video_buffer = deque(maxlen=buffer_size)
