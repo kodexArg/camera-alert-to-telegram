@@ -3,3 +3,4 @@ notes/
 .env
 *.mp4
 notes/
+*.log

@@ -513,8 +513,13 @@ if __name__ == "__main__":
         Config.load()
         logger.remove()
         log_level = Config.log_level.upper()
+        
+        # Asegurar que la carpeta logs exista
+        if not os.path.exists("logs"):
+            os.makedirs("logs")
+            
         logger.add(lambda msg: print(msg, end=""), level=log_level, format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
-        logger.add("surveillance_{time:YYYY-MM-DD}.log", rotation="1 day", retention="7 days", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}")
+        logger.add("logs/app_{time:YYYY-MM-DD}.log", rotation="1 day", retention="7 days", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}")
         logger.info("--- Script Start ---")
         logger.info(f"Log level configured: {log_level}")
         logger.info(f"Use Telegram: {Config.use_telegram}")

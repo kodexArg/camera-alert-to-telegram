@@ -4,12 +4,10 @@ from dotenv import load_dotenv
 
 
 class Config:
-    # Sensibles - se cargan desde .env o argumentos de línea de comandos
     rtsp = None
     token = None
     chat_id = None
 
-    # No sensibles - valores por defecto directos (basados en los defaults originales de os.getenv)
     use_telegram = False
     max_video_files = 20
     video_length_secs = 8
@@ -17,19 +15,16 @@ class Config:
     secs_between_alerts = 8
     sensitivity = 4000
     show_video = False
-    log_level = "INFO"
-    mask = [0, 0, 0, 0]  # Máscara por defecto
+    log_level = "DEBUG"
+    mask = [0, 0, 0, 0]
     fps = 5
     min_motion_frames = 2
     slow_motion = 1.0
-    # video_seconds es un alias para video_length_secs en argparse, se maneja en parse_arguments
 
     @classmethod
     def load(cls):
-        load_dotenv()  # Carga .env para variables sensibles
+        load_dotenv()
 
-        # Carga variables sensibles desde el entorno si están presentes
-        # Éstas servirán como default para argparse si no se sobrescriben por argumentos
         env_rtsp = os.getenv("RTSP")
         if env_rtsp is not None:
             cls.rtsp = env_rtsp
@@ -41,24 +36,19 @@ class Config:
         env_chat_id = os.getenv("CHAT_ID")
         if env_chat_id is not None:
             cls.chat_id = env_chat_id
-        
-        # Las variables no sensibles ya tienen sus defaults a nivel de clase.
-        # argparse usará estos defaults si no se provee un argumento en línea de comandos.
 
-        cls.parse_arguments()  # Aplica argumentos de línea de comandos
+        cls.parse_arguments()
 
-        # Valida el factor slow_motion (ya sea el default o el de argparse)
         if cls.slow_motion <= 0:
             raise ValueError("SLOW_MOTION must be a positive value.")
 
-        cls.validate_mask(cls)  # Valida formato y valores de la máscara
-        cls.validate_telegram_settings()  # Valida configuración de Telegram si use_telegram es True
+        cls.validate_mask(cls)
+        cls.validate_telegram_settings()
 
     @classmethod
     def parse_arguments(cls):
         parser = argparse.ArgumentParser(description="Motion Detection in Video Streams. RTSP URL is required as an argument or environment variable.")
         
-        # Los argumentos usan los atributos de clase actuales como sus valores por defecto
         parser.add_argument("--rtsp", type=str, default=cls.rtsp, help="RTSP URL of the camera (required if not set in environment or via --rtsp)")
         parser.add_argument("--use-telegram", action="store_true", default=cls.use_telegram, help="Use Telegram integration (requires TOKEN and CHAT_ID in .env or arguments)")
         parser.add_argument("--video-seconds", type=int, default=cls.video_length_secs, help="Number of seconds for saved video (minimum 4)")
@@ -76,21 +66,14 @@ class Config:
         parser.add_argument("--fps", type=int, default=cls.fps, help="Frames per Second")
         parser.add_argument("--min-motion-frames", type=int, default=cls.min_motion_frames, help="How many motion detection should occur before considering it a motion")
         parser.add_argument("--slow-motion", type=float, default=cls.slow_motion, help="Slow motion factor (e.g., 0.75 for 75% speed, 1.0 for normal speed)")
-        # MAX_VIDEO_FILES no es un argumento, usará el default de la clase.
-        # TOKEN y CHAT_ID no son argumentos de línea de comandos (por seguridad), se cargan de .env.
 
         args = parser.parse_args()
 
-        # Actualiza los atributos de clase con los valores de los argumentos parseados
-        # args contiene los valores de la línea de comandos, o los defaults especificados en add_argument
-        # (que a su vez provinieron de los atributos de clase actuales).
-        
-        # Asignaciones directas para claridad y manejo de alias como video_seconds
-        if args.rtsp is not None: # Puede ser None si no se dio en arg ni en env
+        if args.rtsp is not None:
             cls.rtsp = args.rtsp
         
         cls.use_telegram = args.use_telegram
-        cls.video_length_secs = args.video_seconds # Mapeo de --video-seconds a cls.video_length_secs
+        cls.video_length_secs = args.video_seconds
         cls.detection_seconds = args.detection_seconds
         cls.secs_between_alerts = args.secs_between_alerts
         cls.sensitivity = args.sensitivity
@@ -100,16 +83,10 @@ class Config:
         cls.fps = args.fps
         cls.min_motion_frames = args.min_motion_frames
         cls.slow_motion = args.slow_motion
-        
-        # Los atributos que no son argumentos de argparse (ej. max_video_files, token, chat_id si no están en .env)
-        # retienen sus valores (default de clase o de .env). Token y chat_id se cargaron antes.
 
-        # Asegura valores mínimos para ciertos parámetros de configuración
         cls.video_length_secs = max(cls.video_length_secs, 4)
         cls.detection_seconds = max(cls.detection_seconds, 0)
         cls.secs_between_alerts = max(cls.secs_between_alerts, cls.video_length_secs + 1)
-
-        # Asegura que la URL RTSP esté provista (ya sea desde .env o --rtsp)
         if not cls.rtsp:
             parser.error("RTSP URL is required. Set it as an argument (--rtsp) or as an environment variable (RTSP).")
 
