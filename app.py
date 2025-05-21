@@ -541,7 +541,7 @@ if __name__ == "__main__":
         try:
             Config.load()
             log_level = Config.log_level.upper()
-            logger.level(log_level, console_handler)
+            logger.configure(handlers=[{"sink": lambda msg: print(msg, end=""), "level": log_level}])
             logger.info(f"Console log level configured: {log_level}")
             logger.info(f"File log level: DEBUG")
         except Exception as config_error:
