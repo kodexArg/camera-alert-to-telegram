@@ -1,6 +1,7 @@
 import os
 import argparse
 from dotenv import load_dotenv
+from loguru import logger
 
 
 class Config:
@@ -39,8 +40,10 @@ class Config:
 
         cls.parse_arguments()
 
+        # Validate critical parameters
         if cls.slow_motion <= 0:
-            raise ValueError("SLOW_MOTION must be a positive value.")
+            cls.slow_motion = 1.0
+            logger.warning(f"SLOW_MOTION must be a positive value. Reset to {cls.slow_motion}.")
 
         cls.validate_mask(cls)
         cls.validate_telegram_settings()

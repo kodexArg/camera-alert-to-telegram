@@ -3,6 +3,8 @@ import asyncio
 import cv2
 import os
 import glob
+import sys
+import traceback
 from datetime import datetime, timedelta
 from collections import deque
 from loguru import logger
@@ -76,7 +78,7 @@ def save_video(video_buffer, duration_seconds=None, prefix="motion", first_motio
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{VIDEO_DIRECTORY}/{prefix}_{timestamp_str}_{save_duration}s.mp4"
 
-    output_fps = max(1, Config.fps * Config.slow_motion) 
+    output_fps = max(1, Config.fps * Config.slow_motion) if Config.slow_motion > 0 else Config.fps
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(filename, fourcc, output_fps, (width, height))
@@ -215,29 +217,23 @@ async def process_frame(frame, gray_frame, background_subtractor):
 async def handle_motion_detection(
     motion_detected, video_buffer, last_motion, last_alert, on_alert, motion_frame_count, bot, first_motion_time=None
 ):
-    """Handle alert state based on motion detection."""
     now = datetime.now()
     motion_frame_count, is_sustained_motion = update_motion_frame_count(
         motion_detected, motion_frame_count
     )
 
-    # Track the time of first motion in a sequence
     if motion_detected and not last_motion:
-        # This is the first frame with motion after a period without motion
         first_motion_time = now
         logger.debug(f"First motion detected at {first_motion_time.strftime('%H:%M:%S')}")
 
     if on_alert:
-        # Since we want the video to be centered on the motion time, 
-        # we need to wait for half the video duration after the detection
         half_duration = Config.video_length_secs / 2
         time_since_first_motion = now - first_motion_time if first_motion_time else timedelta(seconds=0)
-        
-        # Wait until we have enough footage after the motion detection
+
         if time_since_first_motion >= timedelta(seconds=half_duration):
             saved_video_path = save_video(
-                video_buffer, 
-                Config.video_length_secs, 
+                video_buffer,
+                Config.video_length_secs,
                 prefix="motion",
                 first_motion_time=first_motion_time
             )
@@ -248,7 +244,7 @@ async def handle_motion_detection(
             on_alert = False
             motion_frame_count = 0
             last_alert = now
-            first_motion_time = None  # Reset for next motion sequence
+            first_motion_time = None
 
     if is_sustained_motion and not on_alert:
         min_time_between_alerts = timedelta(seconds=Config.secs_between_alerts)
@@ -262,13 +258,11 @@ async def handle_motion_detection(
     if motion_detected:
         last_motion = now
     elif last_motion and (now - last_motion) > timedelta(seconds=2):
-        # Reset last_motion if no motion for 2 seconds
         last_motion = None
 
     return last_motion, last_alert, on_alert, motion_frame_count, first_motion_time
 
 async def process_frames(video_capture, video_buffer, bot):
-    """Process frames from video stream."""
     on_alert = False
     current_frame_motion_detected = False
     motion_frame_count = 0
@@ -315,7 +309,6 @@ async def process_frames(video_capture, video_buffer, bot):
             break
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command with chat info."""
     chat_id = update.effective_chat.id
     user = update.effective_user
     await update.message.reply_html(
@@ -326,7 +319,6 @@ async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def handle_photo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send instant camera photo."""
     video_buffer = context.bot_data.get('video_buffer')
 
     if not video_buffer:
@@ -358,7 +350,6 @@ async def handle_photo_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"⚠️ Unexpected error generating photo: {e}")
 
 async def send_requested_clip(update: Update, context: ContextTypes.DEFAULT_TYPE, duration_seconds: int):
-    """Generate and send video clip of specific duration."""
     video_buffer = context.bot_data.get('video_buffer')
 
     if not video_buffer:
@@ -400,18 +391,14 @@ async def send_requested_clip(update: Update, context: ContextTypes.DEFAULT_TYPE
         await wait_msg.edit_text(f"⚠️ Unexpected error generating clip: {e}")
 
 async def handle_clip5_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for /clip5 command."""
     await send_requested_clip(update, context, duration_seconds=5)
 
 async def handle_clip20_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for /clip20 command."""
     await send_requested_clip(update, context, duration_seconds=20)
 
 async def main():
-    """Initialize and run bot and video processing."""
     global app_bot
 
-    # Calculate the total buffer duration in seconds, including video length, time between alerts, and an additional 5-second margin.
     buffer_seconds = Config.video_length_secs + Config.secs_between_alerts + 5
     buffer_size = int(Config.fps * buffer_seconds)
     video_buffer = deque(maxlen=buffer_size)
@@ -495,7 +482,6 @@ async def main():
             logger.info("Cleanup completed.")
 
 async def signal_handler(sig, frame):
-    """Handler for clean shutdown with Ctrl+C."""
     global app_bot
     logger.warning(f"Signal {sig} received. Starting clean shutdown...")
     if app_bot:
@@ -510,43 +496,67 @@ async def signal_handler(sig, frame):
 
 if __name__ == "__main__":
     try:
+        # Remove default loggers
         logger.remove()
         
+        # Create logs directory if it doesn't exist
         script_dir = os.path.dirname(os.path.abspath(__file__))
         logs_dir = os.path.join(script_dir, "logs")
         if not os.path.exists(logs_dir):
             os.makedirs(logs_dir)
         
-        logger.add(lambda msg: print(msg, end=""), level="INFO", format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
-        logger.add(os.path.join(logs_dir, "app_{time:YYYY-MM-DD}.log"), rotation="1 day", retention="7 days", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}")
+        # Add console logger
+        console_handler = logger.add(
+            lambda msg: print(msg, end=""), 
+            level="INFO", 
+            format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+        )
+        
+        # Add file logger - note that we're setting this to DEBUG level to capture all messages
+        file_handler = logger.add(
+            os.path.join(logs_dir, "app_{time:YYYY-MM-DD}.log"), 
+            rotation="1 day", 
+            retention="7 days", 
+            level="DEBUG",  # Set to DEBUG by default to capture everything
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+            backtrace=True,  # Include traceback information for errors
+            diagnose=True    # Include variable values in tracebacks
+        )
         
         logger.info("--- Script Start ---")
         
         try:
             Config.load()
+            # Configure log level only for console output based on config
             log_level = Config.log_level.upper()
-            for handler_id in logger._core.handlers:
-                logger.configure(handlers=[{"sink": logger._core.handlers[handler_id]._sink, "level": log_level}])
-            logger.info(f"Log level configured: {log_level}")
+            logger.configure(handlers={console_handler: {"level": log_level}})
+            logger.info(f"Console log level configured: {log_level}")
+            logger.info(f"File log level: DEBUG")
         except Exception as config_error:
-            logger.critical(f"Configuration error: {config_error}")
+            logger.critical(f"Configuration error: {config_error}", exc_info=True)
             raise
             
         logger.info(f"Use Telegram: {Config.use_telegram}")
         logger.info(f"Show Video: {Config.show_video}")
-
+        
+        # Run main application
         asyncio.run(main())
 
-    except FileNotFoundError:
-        print("CRITICAL ERROR: .env or config.py file not found.")
-        logger.critical("File .env or config.py not found.")
+    except FileNotFoundError as fnf:
+        error_msg = f"CRITICAL ERROR: .env or config.py file not found: {fnf}"
+        print(error_msg)
+        logger.critical(error_msg, exc_info=True)
     except ValueError as ve:
-        print(f"CRITICAL ERROR in configuration: {ve}")
-        logger.critical(f"Configuration error: {ve}")
+        error_msg = f"CRITICAL ERROR in configuration: {ve}"
+        print(error_msg)
+        logger.critical(error_msg, exc_info=True)
     except KeyboardInterrupt:
         logger.info("Script interrupted by user (Ctrl+C).")
     except Exception as e_global:
-        print(f"UNEXPECTED CRITICAL ERROR: {e_global}")
-        logger.critical(f"Unhandled critical error at entry point: {e_global}", exc_info=True)
+        error_msg = f"UNEXPECTED CRITICAL ERROR: {e_global}"
+        print(error_msg)
+        logger.critical(error_msg, exc_info=True)
+        traceback_str = "".join(traceback.format_exception(type(e_global), e_global, e_global.__traceback__))
+        logger.critical(f"Traceback:\n{traceback_str}")
 
     logger.info("--- Script End ---")
