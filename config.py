@@ -40,7 +40,6 @@ class Config:
 
         cls.parse_arguments()
 
-        # Validate critical parameters
         if cls.slow_motion <= 0:
             cls.slow_motion = 1.0
             logger.warning(f"SLOW_MOTION must be a positive value. Reset to {cls.slow_motion}.")
