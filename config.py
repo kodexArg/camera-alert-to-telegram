@@ -11,13 +11,13 @@ class Config:
 
     use_telegram = True
     max_video_files = 20
-    video_length_secs = 8
+    video_length_secs = 20
     detection_seconds = 2
-    secs_between_alerts = 8
-    sensitivity = 4000
+    secs_between_alerts = 21
+    sensitivity = 3000
     show_video = False
     log_level = "DEBUG"
-    mask = [0, 0, 640, 480]
+    mask = [150, 290, 683, 523]
     fps = 5
     min_motion_frames = 2
     slow_motion = 0.75
